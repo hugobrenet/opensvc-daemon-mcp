@@ -3,16 +3,50 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
 
+	mcptools "github.com/hugobrenet/opensvc-daemon-mcp/internal/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestServerOverStdio(t *testing.T) {
+	daemonServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/cluster/status" {
+			t.Errorf("got daemon path %q, want /api/cluster/status", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(response, `{
+			"cluster": {
+				"config": {
+					"id": "cluster-123",
+					"name": "prod"
+				},
+				"node": {
+					"node-a": {
+						"status": {
+							"agent": "v3.0.0"
+						}
+					}
+				}
+			},
+			"daemon": {
+				"nodename": "node-a"
+			}
+		}`)
+	}))
+	defer daemonServer.Close()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+
+	command := exec.CommandContext(ctx, "go", "run", ".")
+	command.Env = append(os.Environ(), "OPENSVC_DAEMON_URL="+daemonServer.URL)
 
 	client := mcp.NewClient(
 		&mcp.Implementation{
@@ -23,7 +57,7 @@ func TestServerOverStdio(t *testing.T) {
 	)
 	session, err := client.Connect(
 		ctx,
-		&mcp.CommandTransport{Command: exec.CommandContext(ctx, "go", "run", ".")},
+		&mcp.CommandTransport{Command: command},
 		nil,
 	)
 	if err != nil {
@@ -48,7 +82,7 @@ func TestServerOverStdio(t *testing.T) {
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "get_server_identity",
-		Arguments: GetServerIdentityInput{},
+		Arguments: mcptools.GetServerIdentityInput{},
 	})
 	if err != nil {
 		t.Fatalf("call get_server_identity: %v", err)
@@ -61,15 +95,28 @@ func TestServerOverStdio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal structured content: %v", err)
 	}
-	var identity GetServerIdentityOutput
+	var identity mcptools.GetServerIdentityOutput
 	if err := json.Unmarshal(data, &identity); err != nil {
 		t.Fatalf("decode structured content: %v", err)
 	}
-	t.Logf("get_server_identity response: name=%q version=%q", identity.Name, identity.Version)
-	if identity.Name != serverName {
-		t.Errorf("got server name %q, want %q", identity.Name, serverName)
+
+	t.Logf(
+		"get_server_identity response: nodename=%q cluster_id=%q cluster_name=%q agent_version=%q",
+		identity.Daemon.NodeName,
+		identity.Cluster.ID,
+		identity.Cluster.Name,
+		identity.Node.AgentVersion,
+	)
+	if identity.Daemon.NodeName != "node-a" {
+		t.Errorf("got nodename %q, want node-a", identity.Daemon.NodeName)
 	}
-	if identity.Version != serverVersion {
-		t.Errorf("got server version %q, want %q", identity.Version, serverVersion)
+	if identity.Cluster.ID != "cluster-123" {
+		t.Errorf("got cluster ID %q, want cluster-123", identity.Cluster.ID)
+	}
+	if identity.Cluster.Name != "prod" {
+		t.Errorf("got cluster name %q, want prod", identity.Cluster.Name)
+	}
+	if identity.Node.AgentVersion != "v3.0.0" {
+		t.Errorf("got agent version %q, want v3.0.0", identity.Node.AgentVersion)
 	}
 }
