@@ -17,17 +17,55 @@ import (
 )
 
 func TestServerOverStdio(t *testing.T) {
-	const token = "test-daemon-jwt"
-	tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
-	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
-		t.Fatalf("write daemon JWT file: %v", err)
+	tests := []struct {
+		name              string
+		environment       func(*testing.T) []string
+		wantAuthorization string
+	}{
+		{
+			name: "JWT",
+			environment: func(t *testing.T) []string {
+				tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
+				if err := os.WriteFile(tokenFile, []byte("test-daemon-jwt\n"), 0o600); err != nil {
+					t.Fatalf("write daemon JWT file: %v", err)
+				}
+				return []string{
+					"OPENSVC_DAEMON_AUTH_METHOD=jwt",
+					"OPENSVC_DAEMON_TOKEN_FILE=" + tokenFile,
+				}
+			},
+			wantAuthorization: "Bearer test-daemon-jwt",
+		},
+		{
+			name: "Basic",
+			environment: func(t *testing.T) []string {
+				passwordFile := filepath.Join(t.TempDir(), "daemon.password")
+				if err := os.WriteFile(passwordFile, []byte("test-password\n"), 0o600); err != nil {
+					t.Fatalf("write daemon password file: %v", err)
+				}
+				return []string{
+					"OPENSVC_DAEMON_AUTH_METHOD=basic",
+					"OPENSVC_DAEMON_BASIC_USERNAME=test-user",
+					"OPENSVC_DAEMON_BASIC_PASSWORD_FILE=" + passwordFile,
+				}
+			},
+			wantAuthorization: "Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=",
+		},
 	}
 
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testServerOverStdio(t, test.environment(t), test.wantAuthorization)
+		})
+	}
+}
+
+func testServerOverStdio(t *testing.T, authEnvironment []string, wantAuthorization string) {
 	daemonServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/cluster/status" {
 			t.Errorf("got daemon path %q, want /api/cluster/status", request.URL.Path)
 		}
-		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
+		if got := request.Header.Get("Authorization"); got != wantAuthorization {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -57,12 +95,10 @@ func TestServerOverStdio(t *testing.T) {
 	defer cancel()
 
 	command := exec.CommandContext(ctx, "go", "run", ".")
-	command.Env = append(
+	command.Env = append(append(
 		os.Environ(),
 		"OPENSVC_DAEMON_URL="+daemonServer.URL,
-		"OPENSVC_DAEMON_AUTH_METHOD=jwt",
-		"OPENSVC_DAEMON_TOKEN_FILE="+tokenFile,
-	)
+	), authEnvironment...)
 
 	client := mcp.NewClient(
 		&mcp.Implementation{

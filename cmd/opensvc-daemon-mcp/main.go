@@ -21,10 +21,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	authenticator, err := newAuthenticator(
-		cfg.authMethod,
-		cfg.tokenFile,
-	)
+	authenticator, err := newAuthenticator(cfg.auth)
 	if err != nil {
 		log.Fatal(err)
 	}

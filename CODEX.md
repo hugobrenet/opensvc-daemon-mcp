@@ -24,7 +24,7 @@ GET /api/cluster/status?selector=**
 
 and returns a filtered identity response for the local daemon, cluster, node, and listener.
 
-JWT Bearer authentication from a rotating token file is implemented. Do not add additional tools, authentication modes, transports, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
+JWT Bearer and Basic Auth from rotating secret files are implemented. Do not add additional tools, authentication modes, transports, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
 ## Technology
 
@@ -53,6 +53,8 @@ cmd/
 internal/
   auth/
     auth.go
+    basic.go
+    basic_test.go
     jwt.go
     jwt_test.go
   client/
@@ -131,7 +133,7 @@ Do not add a generic MCP tool that exposes Client.GetJSON.
 
 internal/auth owns request authentication only.
 
-The Authenticator interface applies credentials to an HTTP request. The current JWT implementation:
+The Authenticator interface applies credentials to an HTTP request. The JWT implementation:
 
 - reads the configured token file on every request;
 - trims surrounding whitespace;
@@ -141,7 +143,17 @@ The Authenticator interface applies credentials to an HTTP request. The current 
 
 JWT verification and grant enforcement belong to the OpenSVC daemon. Token creation and refresh are outside the current MCP server scope.
 
+The Basic Auth implementation:
+
+- reads the configured password file on every request;
+- removes one trailing LF or CRLF line ending but preserves other whitespace;
+- uses `http.Request.SetBasicAuth` rather than building the header manually;
+- fails on a missing or empty username or password file;
+- never returns or logs the password.
+
 The `none` implementation is reserved for unit tests and fake unprotected daemons. Do not use it to bypass authentication on a real daemon.
+
+Prefer a dedicated least-privileged OpenSVC `system/usr/<username>` object for Basic Auth. Do not use node-name plus cluster-secret authentication merely for convenience, because it grants root access.
 
 ### core
 
@@ -246,7 +258,7 @@ The end-to-end stdio test in cmd/opensvc-daemon-mcp/main_test.go must continue t
 
 ## API and security rules
 
-The current client sends JWT Bearer authentication by default. The token comes only from the configured file and must never enter MCP tool arguments or results.
+The current client supports JWT Bearer and Basic Auth, with JWT as the default. Secrets come only from configured files and must never enter MCP tool arguments or results.
 
 Do not silently disable TLS certificate verification.
 
@@ -288,6 +300,8 @@ Current environment:
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 |
 | OPENSVC_DAEMON_AUTH_METHOD | jwt |
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token |
+| OPENSVC_DAEMON_BASIC_USERNAME | empty |
+| OPENSVC_DAEMON_BASIC_PASSWORD_FILE | /run/opensvc-daemon-mcp/password |
 | OPENSVC_DAEMON_TLS_INSECURE | false |
 
 Do not add configuration libraries for a small number of settings. Prefer the standard library until configuration complexity justifies another dependency.
@@ -317,9 +331,9 @@ Before adding a Go module:
 
 ## Known limitations
 
-- JWT is the only production daemon authentication method;
+- JWT and Basic Auth are the production daemon authentication methods;
 - no automatic JWT creation or refresh;
-- no Basic Auth or X.509 client-certificate authentication;
+- no X.509 client-certificate authentication;
 - no custom CA or client certificate configuration;
 - no Unix socket transport;
 - no HTTP MCP transport;

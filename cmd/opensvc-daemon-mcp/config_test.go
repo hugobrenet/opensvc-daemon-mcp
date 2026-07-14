@@ -9,6 +9,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	t.Setenv("OPENSVC_DAEMON_URL", "")
 	t.Setenv("OPENSVC_DAEMON_AUTH_METHOD", "")
 	t.Setenv("OPENSVC_DAEMON_TOKEN_FILE", "")
+	t.Setenv("OPENSVC_DAEMON_BASIC_USERNAME", "")
+	t.Setenv("OPENSVC_DAEMON_BASIC_PASSWORD_FILE", "")
 	t.Setenv("OPENSVC_DAEMON_TLS_INSECURE", "")
 
 	got, err := loadConfig()
@@ -17,9 +19,13 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 
 	want := config{
-		daemonURL:   defaultDaemonURL,
-		authMethod:  defaultAuthMethod,
-		tokenFile:   defaultTokenFile,
+		daemonURL: defaultDaemonURL,
+		auth: authConfig{
+			method:            defaultAuthMethod,
+			tokenFile:         defaultTokenFile,
+			basicUsername:     "",
+			basicPasswordFile: defaultBasicPasswordFile,
+		},
 		tlsInsecure: defaultTLSInsecure,
 	}
 	if got != want {
@@ -31,6 +37,8 @@ func TestLoadConfigFromEnvironment(t *testing.T) {
 	t.Setenv("OPENSVC_DAEMON_URL", "https://node-a.example:1215")
 	t.Setenv("OPENSVC_DAEMON_AUTH_METHOD", "none")
 	t.Setenv("OPENSVC_DAEMON_TOKEN_FILE", "/tmp/daemon.jwt")
+	t.Setenv("OPENSVC_DAEMON_BASIC_USERNAME", "operator")
+	t.Setenv("OPENSVC_DAEMON_BASIC_PASSWORD_FILE", "/tmp/daemon.password")
 	t.Setenv("OPENSVC_DAEMON_TLS_INSECURE", "true")
 
 	got, err := loadConfig()
@@ -39,9 +47,13 @@ func TestLoadConfigFromEnvironment(t *testing.T) {
 	}
 
 	want := config{
-		daemonURL:   "https://node-a.example:1215",
-		authMethod:  "none",
-		tokenFile:   "/tmp/daemon.jwt",
+		daemonURL: "https://node-a.example:1215",
+		auth: authConfig{
+			method:            "none",
+			tokenFile:         "/tmp/daemon.jwt",
+			basicUsername:     "operator",
+			basicPasswordFile: "/tmp/daemon.password",
+		},
 		tlsInsecure: true,
 	}
 	if got != want {

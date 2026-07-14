@@ -7,17 +7,24 @@ import (
 )
 
 const (
-	defaultDaemonURL   = "https://127.0.0.1:1215"
-	defaultAuthMethod  = "jwt"
-	defaultTokenFile   = "/run/opensvc-daemon-mcp/token"
-	defaultTLSInsecure = false
+	defaultDaemonURL         = "https://127.0.0.1:1215"
+	defaultAuthMethod        = "jwt"
+	defaultTokenFile         = "/run/opensvc-daemon-mcp/token"
+	defaultBasicPasswordFile = "/run/opensvc-daemon-mcp/password"
+	defaultTLSInsecure       = false
 )
 
 type config struct {
 	daemonURL   string
-	authMethod  string
-	tokenFile   string
+	auth        authConfig
 	tlsInsecure bool
+}
+
+type authConfig struct {
+	method            string
+	tokenFile         string
+	basicUsername     string
+	basicPasswordFile string
 }
 
 func loadConfig() (config, error) {
@@ -29,9 +36,13 @@ func loadConfig() (config, error) {
 	}
 
 	return config{
-		daemonURL:   getenv("OPENSVC_DAEMON_URL", defaultDaemonURL),
-		authMethod:  getenv("OPENSVC_DAEMON_AUTH_METHOD", defaultAuthMethod),
-		tokenFile:   getenv("OPENSVC_DAEMON_TOKEN_FILE", defaultTokenFile),
+		daemonURL: getenv("OPENSVC_DAEMON_URL", defaultDaemonURL),
+		auth: authConfig{
+			method:            getenv("OPENSVC_DAEMON_AUTH_METHOD", defaultAuthMethod),
+			tokenFile:         getenv("OPENSVC_DAEMON_TOKEN_FILE", defaultTokenFile),
+			basicUsername:     getenv("OPENSVC_DAEMON_BASIC_USERNAME", ""),
+			basicPasswordFile: getenv("OPENSVC_DAEMON_BASIC_PASSWORD_FILE", defaultBasicPasswordFile),
+		},
 		tlsInsecure: tlsInsecure,
 	}, nil
 }

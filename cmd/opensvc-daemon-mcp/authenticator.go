@@ -6,13 +6,15 @@ import (
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/auth"
 )
 
-func newAuthenticator(method string, tokenFile string) (auth.Authenticator, error) {
-	switch method {
+func newAuthenticator(cfg authConfig) (auth.Authenticator, error) {
+	switch cfg.method {
 	case "jwt":
-		return auth.NewJWT(tokenFile)
+		return auth.NewJWT(cfg.tokenFile)
+	case "basic":
+		return auth.NewBasic(cfg.basicUsername, cfg.basicPasswordFile)
 	case "none":
 		return auth.None{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported OpenSVC daemon authentication method %q", method)
+		return nil, fmt.Errorf("unsupported OpenSVC daemon authentication method %q", cfg.method)
 	}
 }
