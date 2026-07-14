@@ -42,6 +42,11 @@ Prefer the Go standard library and keep dependencies minimal.
 ~~~text
 cmd/
   opensvc-daemon-mcp/
+    authenticator.go
+    config.go
+    config_test.go
+    http_client.go
+    http_client_test.go
     main.go
     main_test.go
 
@@ -79,6 +84,10 @@ main
 ### main
 
 cmd/opensvc-daemon-mcp/main.go is the composition root.
+
+cmd/opensvc-daemon-mcp/config.go owns environment-variable loading, defaults, parsing, and the process configuration type.
+
+cmd/opensvc-daemon-mcp/authenticator.go and http_client.go own executable-specific dependency construction. Keep environment parsing out of these files and keep transport/authentication implementation details out of main.go.
 
 It is responsible for:
 
@@ -279,8 +288,11 @@ Current environment:
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 |
 | OPENSVC_DAEMON_AUTH_METHOD | jwt |
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token |
+| OPENSVC_DAEMON_TLS_INSECURE | false |
 
 Do not add configuration libraries for a small number of settings. Prefer the standard library until configuration complexity justifies another dependency.
+
+`OPENSVC_DAEMON_TLS_INSECURE=true` is an explicit development-only escape hatch for local self-signed daemon certificates. It must remain disabled by default and must never be enabled silently.
 
 ## Dependency policy
 

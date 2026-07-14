@@ -79,6 +79,11 @@ Repository layout:
 ~~~text
 cmd/
   opensvc-daemon-mcp/
+    authenticator.go
+    config.go
+    config_test.go
+    http_client.go
+    http_client_test.go
     main.go
     main_test.go
 
@@ -99,6 +104,9 @@ internal/
 
 Responsibilities:
 
+- cmd/opensvc-daemon-mcp/config.go loads and validates process configuration from environment variables.
+- cmd/opensvc-daemon-mcp/authenticator.go selects the configured daemon request authenticator.
+- cmd/opensvc-daemon-mcp/http_client.go constructs the daemon HTTP client and its TLS policy.
 - cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the stdio transport.
 - internal/auth applies the configured authentication method to daemon API requests.
 - internal/client contains generic HTTP transport behavior for the OpenSVC daemon API.
@@ -144,6 +152,7 @@ The server supports these environment variables:
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 | Base URL of the local OpenSVC daemon API |
 | OPENSVC_DAEMON_AUTH_METHOD | jwt | Daemon API authentication method. `none` is reserved for tests and fake daemons. |
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token | File containing the raw JWT, without the `Bearer` prefix |
+| OPENSVC_DAEMON_TLS_INSECURE | false | Disable daemon certificate verification. Development only. |
 
 Example:
 
@@ -152,6 +161,14 @@ export OPENSVC_DAEMON_URL=https://127.0.0.1:1215
 export OPENSVC_DAEMON_AUTH_METHOD=jwt
 export OPENSVC_DAEMON_TOKEN_FILE=$HOME/.config/opensvc-daemon-mcp/daemon.jwt
 ~~~
+
+For a local development daemon using a self-signed certificate, verification can be explicitly disabled:
+
+~~~bash
+export OPENSVC_DAEMON_TLS_INSECURE=true
+~~~
+
+This disables certificate-chain and hostname verification. Never enable it when connecting to a daemon over an untrusted network. The default remains secure.
 
 The token file should be readable only by the MCP process owner. Its content is trimmed and sent as:
 
@@ -180,6 +197,7 @@ The server currently uses MCP stdio transport:
 ~~~bash
 OPENSVC_DAEMON_URL=https://127.0.0.1:1215 \
 OPENSVC_DAEMON_TOKEN_FILE=$HOME/.config/opensvc-daemon-mcp/daemon.jwt \
+OPENSVC_DAEMON_TLS_INSECURE=true \
   ./bin/opensvc-daemon-mcp
 ~~~
 
