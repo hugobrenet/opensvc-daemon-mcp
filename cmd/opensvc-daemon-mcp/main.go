@@ -28,7 +28,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	httpClient := client.NewHTTPClient(cfg.TLSInsecure)
+	httpClient, err := client.NewHTTPClient(cfg.HTTP)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	apiClient, err := client.New(cfg.DaemonURL, httpClient, authenticator)
 	if err != nil {

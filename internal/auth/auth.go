@@ -25,6 +25,13 @@ func (None) Apply(_ *http.Request) error {
 	return nil
 }
 
+// X509 leaves HTTP headers unchanged because authentication happens during the TLS handshake.
+type X509 struct{}
+
+func (X509) Apply(_ *http.Request) error {
+	return nil
+}
+
 // New selects and constructs the configured request authenticator.
 func New(options Options) (Authenticator, error) {
 	switch options.Method {
@@ -32,6 +39,8 @@ func New(options Options) (Authenticator, error) {
 		return NewJWT(options.TokenFile)
 	case "basic":
 		return NewBasic(options.BasicUsername, options.BasicPasswordFile)
+	case "x509":
+		return X509{}, nil
 	case "none":
 		return None{}, nil
 	default:

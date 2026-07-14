@@ -117,7 +117,7 @@ internal/config owns environment-variable loading, defaults, parsing, and the ex
 
 internal/client is transport-only.
 
-Client.NewHTTPClient constructs the standard HTTP client, timeout, and optional development-only TLS verification bypass.
+Client.NewHTTPClient constructs the standard HTTP client, timeout, server trust roots, client certificate, private key, and optional development-only TLS verification bypass. It must fail fast on incomplete or invalid TLS files.
 
 Client.GetJSON is responsible for:
 
@@ -137,7 +137,7 @@ Do not add a generic MCP tool that exposes Client.GetJSON.
 
 internal/auth owns request authentication only.
 
-`auth.New` selects an Authenticator from `auth.Options`. Authentication-specific validation remains in the JWT and Basic constructors.
+`auth.New` selects an Authenticator from `auth.Options`. Authentication-specific validation remains in the JWT and Basic constructors. The X509 authenticator intentionally leaves request headers unchanged because its identity is configured in the TLS client.
 
 The Authenticator interface applies credentials to an HTTP request. The JWT implementation:
 
@@ -160,6 +160,8 @@ The Basic Auth implementation:
 The `none` implementation is reserved for unit tests and fake unprotected daemons. Do not use it to bypass authentication on a real daemon.
 
 Prefer a dedicated least-privileged OpenSVC `system/usr/<username>` object for Basic Auth. Do not use node-name plus cluster-secret authentication merely for convenience, because it grants root access.
+
+For X.509, the client certificate Subject Common Name must match a `system/usr/<username>` object. OpenSVC verifies the certificate for TLS client authentication against its configured CAs, then loads grants from that user object.
 
 ### core
 
@@ -264,7 +266,7 @@ The end-to-end stdio test in cmd/opensvc-daemon-mcp/main_test.go must continue t
 
 ## API and security rules
 
-The current client supports JWT Bearer and Basic Auth, with JWT as the default. Secrets come only from configured files and must never enter MCP tool arguments or results.
+The current client supports JWT Bearer, Basic Auth, and X.509 client certificates, with JWT as the default. Secrets come only from configured files and must never enter MCP tool arguments or results.
 
 Do not silently disable TLS certificate verification.
 
@@ -308,6 +310,9 @@ Current environment:
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token |
 | OPENSVC_DAEMON_BASIC_USERNAME | empty |
 | OPENSVC_DAEMON_BASIC_PASSWORD_FILE | /run/opensvc-daemon-mcp/password |
+| OPENSVC_DAEMON_X509_CERT_FILE | /run/opensvc-daemon-mcp/client.crt for x509 |
+| OPENSVC_DAEMON_X509_KEY_FILE | /run/opensvc-daemon-mcp/client.key for x509 |
+| OPENSVC_DAEMON_TLS_CA_FILE | empty |
 | OPENSVC_DAEMON_TLS_INSECURE | false |
 
 Do not add configuration libraries for a small number of settings. Prefer the standard library until configuration complexity justifies another dependency.
@@ -337,10 +342,9 @@ Before adding a Go module:
 
 ## Known limitations
 
-- JWT and Basic Auth are the production daemon authentication methods;
+- JWT, Basic Auth, and X.509 client certificates are implemented daemon authentication methods;
 - no automatic JWT creation or refresh;
-- no X.509 client-certificate authentication;
-- no custom CA or client certificate configuration;
+- client certificates and keys are loaded at startup and are not dynamically rotated;
 - no Unix socket transport;
 - no HTTP MCP transport;
 - one tool only;

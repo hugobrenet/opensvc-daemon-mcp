@@ -34,6 +34,15 @@ func TestNew(t *testing.T) {
 			},
 		},
 		{
+			name:    "X509",
+			options: Options{Method: "x509"},
+			check: func(t *testing.T, authenticator Authenticator) {
+				if _, ok := authenticator.(X509); !ok {
+					t.Fatalf("got authenticator %T, want X509", authenticator)
+				}
+			},
+		},
+		{
 			name:    "none",
 			options: Options{Method: "none"},
 			check: func(t *testing.T, authenticator Authenticator) {

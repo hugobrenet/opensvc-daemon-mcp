@@ -13,12 +13,12 @@ The current implementation:
 - runs as an MCP server over stdin/stdout;
 - uses the official Go MCP SDK;
 - connects to a configurable OpenSVC daemon API URL;
-- authenticates daemon API requests with JWT Bearer or Basic Auth;
+- authenticates daemon API requests with JWT Bearer, Basic Auth, or an X.509 client certificate;
 - exposes one tool: get_server_identity;
 - calls GET /api/cluster/status with selector=**;
 - returns a filtered, structured identity response;
-- reloads secret files for every request so credentials can be rotated without restarting the MCP server;
-- has no client-certificate authentication or custom CA configuration yet.
+- reloads JWT and Basic Auth secret files for every request so credentials can be rotated without restarting the MCP server;
+- supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
 
@@ -118,7 +118,7 @@ The MCP layer does not expose a generic call_api tool. Every capability must hav
 ## Requirements
 
 - Go 1.25.5 or later
-- Access to an OpenSVC v3 daemon API and valid JWT or Basic Auth credentials
+- Access to an OpenSVC v3 daemon API and valid JWT, Basic Auth, or X.509 credentials
 - Git
 
 ## Installation from source
@@ -154,6 +154,9 @@ The server supports these environment variables:
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token | File containing the raw JWT, without the `Bearer` prefix |
 | OPENSVC_DAEMON_BASIC_USERNAME | empty | Basic Auth username; required when the method is `basic` |
 | OPENSVC_DAEMON_BASIC_PASSWORD_FILE | /run/opensvc-daemon-mcp/password | File containing the Basic Auth password |
+| OPENSVC_DAEMON_X509_CERT_FILE | /run/opensvc-daemon-mcp/client.crt for `x509` | PEM client certificate chain |
+| OPENSVC_DAEMON_X509_KEY_FILE | /run/opensvc-daemon-mcp/client.key for `x509` | PEM client private key |
+| OPENSVC_DAEMON_TLS_CA_FILE | empty | PEM CA certificates appended to the system trust store |
 | OPENSVC_DAEMON_TLS_INSECURE | false | Disable daemon certificate verification. Development only. |
 
 Example:
@@ -203,6 +206,17 @@ sudo om system/usr/opensvc-daemon-mcp key add \
 
 Review and extend this grant only when a new tool demonstrates that it requires additional permissions.
 
+X.509 client-authentication example:
+
+~~~bash
+export OPENSVC_DAEMON_AUTH_METHOD=x509
+export OPENSVC_DAEMON_X509_CERT_FILE=/run/opensvc-daemon-mcp/client.crt
+export OPENSVC_DAEMON_X509_KEY_FILE=/run/opensvc-daemon-mcp/client.key
+export OPENSVC_DAEMON_TLS_CA_FILE=/run/opensvc-daemon-mcp/ca.crt
+~~~
+
+The client certificate must permit TLS client authentication, chain to a CA trusted by the OpenSVC daemon, and use the OpenSVC username as its Subject Common Name. A matching `system/usr/<common-name>` object provides the grants. The certificate and key are loaded when the MCP process starts, so rotating them currently requires a restart.
+
 For an unprotected fake daemon in development, authentication can be explicitly disabled:
 
 ~~~bash
@@ -211,9 +225,7 @@ export OPENSVC_DAEMON_AUTH_METHOD=none
 
 Do not use `none` with a real daemon.
 
-Client certificates, custom certificate authorities, and Unix socket transport are not implemented yet.
-
-A protected or self-signed daemon endpoint may therefore reject the live request until those features are added.
+Unix socket transport is not implemented yet.
 
 ## Run
 
@@ -259,6 +271,7 @@ The test suite covers:
 - generic JSON GET requests;
 - JWT Bearer injection, whitespace trimming, missing or empty files, and token rotation;
 - Basic Auth injection, line-ending handling, missing or empty files, and password rotation;
+- custom server CA loading and mutual TLS with a required client certificate;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
 - the get_server_identity core use case;
@@ -279,14 +292,13 @@ The test suite covers:
 
 Near-term work is expected to focus on:
 
-1. X.509 client-certificate authentication;
-2. trusted TLS and custom CA configuration;
-3. Unix socket support for local development;
-4. richer tests against representative OpenSVC v3 responses;
-5. stable error contracts;
-6. additional read-only tools driven by operational use cases;
-7. HTTP MCP transport and caller authentication;
-8. audited, policy-controlled state-changing tools.
+1. certificate rotation without process restart;
+2. Unix socket support for local development;
+3. richer tests against representative OpenSVC v3 responses;
+4. stable error contracts;
+5. additional read-only tools driven by operational use cases;
+6. HTTP MCP transport and caller authentication;
+7. audited, policy-controlled state-changing tools.
 
 ## License
 
