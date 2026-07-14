@@ -16,124 +16,19 @@ The current implementation:
 - requires an OpenSVC Bearer access JWT on every MCP request;
 - validates JWT signatures and claims before invoking the MCP handler;
 - delegates the same request-scoped JWT to the daemon API;
-- exposes three read-only tools: get_daemon_identity, get_cluster_health, and list_cluster_objects;
-- calls bounded OpenSVC status and object-path endpoints;
-- returns filtered, structured identity, health, and object inventory responses;
+- exposes a small, typed, read-only tool surface documented by domain;
+- returns filtered, bounded structured responses;
 - supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
 
-## Current tools
+## Tool documentation
 
-### get_daemon_identity
+Tool documentation is organized by OpenSVC daemon domain:
 
-Returns identity information reported by the local OpenSVC daemon.
-
-The tool has no input parameters.
-
-Example structured output:
-
-~~~json
-{
-  "daemon": {
-    "nodename": "node-a",
-    "pid": 2610,
-    "started_at": "2026-07-10T17:23:35+09:00",
-    "routines": 121
-  },
-  "cluster": {
-    "id": "cluster-123",
-    "name": "prod",
-    "nodes": ["node-a", "node-b"],
-    "quorum": true
-  },
-  "node": {
-    "agent_version": "v3.0.0",
-    "api_version": 1,
-    "compat_version": 2,
-    "is_leader": true,
-    "is_overloaded": false,
-    "booted_at": "2026-07-10T17:23:14+09:00"
-  },
-  "listener": {
-    "address": "::",
-    "port": 1215
-  }
-}
-~~~
-
-The full cluster status payload is intentionally not exposed. Object, instance, pool, schedule, heartbeat, and private node configuration data will be handled by dedicated tools if needed.
-
-### get_cluster_health
-
-Returns a deterministic health assessment for the cluster, configured and reported nodes, and actor objects. It reports explicit issues and bounded summaries; problem objects are sorted by path and limited to 100 entries.
-
-The tool has no input parameters and uses the same `GET /api/cluster/status?selector=**` snapshot as the daemon identity use case.
-
-### list_cluster_objects
-
-Returns a sorted, paginated inventory of OpenSVC object paths visible to the delegated caller. It calls `GET /api/object/path`, so instance configuration and status payloads are not exposed.
-
-Inputs are an optional native OpenSVC `selector` (default `**`), a `limit` from 1 to 200 (default 100), and an optional `cursor` returned by the previous page.
-
-## Architecture
-
-The project currently follows four simple layers:
-
-~~~text
-MCP tool
-  -> core use case
-    -> generic OpenSVC API client
-      -> OpenSVC daemon API
-~~~
-
-Repository layout:
-
-~~~text
-cmd/
-  opensvc-daemon-mcp/
-    main.go
-    main_test.go
-
-internal/
-  auth/
-    context.go
-    context_test.go
-    jwt.go
-    jwt_test.go
-    middleware.go
-    middleware_test.go
-  client/
-    client.go
-    client_test.go
-    http.go
-    http_test.go
-  config/
-    config.go
-    config_test.go
-  core/
-    daemon.go
-    daemon_test.go
-    cluster.go
-    cluster_test.go
-    object.go
-    object_test.go
-  tools/
-    daemon.go
-    cluster.go
-    object.go
-~~~
-
-Responsibilities:
-
-- cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the Streamable HTTP transport.
-- internal/auth validates incoming OpenSVC access JWTs, stores the delegated token in request context, and applies it to daemon API requests.
-- internal/client contains generic HTTP transport behavior and constructs the daemon HTTP client with its TLS policy.
-- internal/config loads and validates process configuration from environment variables.
-- internal/core contains OpenSVC-specific use cases and response shaping.
-- internal/tools contains MCP input/output contracts and tool registration.
-
-The MCP layer does not expose a generic call_api tool. Every capability must have an explicit, bounded contract.
+- [Daemon domain](docs/tools/daemon.md)
+- [Cluster domain](docs/tools/cluster.md)
+- [Object domain](docs/tools/object.md)
 
 ## Requirements
 
@@ -254,14 +149,15 @@ The test suite covers:
 - custom server CA loading and TLS verification;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
-- the get_daemon_identity, get_cluster_health, and list_cluster_objects core use cases;
-- end-to-end Streamable HTTP MCP calls to all tools using a delegated JWT against a fake OpenSVC daemon.
+- the current core use cases and their bounded response shaping;
+- end-to-end Streamable HTTP MCP calls to every registered tool using a delegated JWT against a fake OpenSVC daemon.
 
 ## Design principles
 
 - Keep the OpenSVC daemon API client generic and internal.
 - Keep endpoint selection and OpenSVC semantics in the core layer.
 - Keep MCP schemas and registration in the tools layer.
+- Keep user-facing tool documentation in docs/tools.
 - Register each tool domain explicitly in main.go.
 - Prefer typed, bounded tools over arbitrary API access.
 - Do not expose credentials or raw secrets to MCP clients or language models.

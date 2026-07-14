@@ -10,22 +10,11 @@ The long-term goal is to support an AI operations agent that can inspect, diagno
 
 ## Current scope
 
-The current scope is intentionally limited to three read-only tools:
+The current implementation exposes a limited read-only tool surface. Tool contracts, endpoints, examples, and domain-specific behavior are documented in:
 
-~~~text
-get_daemon_identity
-get_cluster_health
-list_cluster_objects
-~~~
-
-These tools read:
-
-~~~text
-GET /api/cluster/status?selector=**
-GET /api/object/path?path=<selector>
-~~~
-
-and return filtered daemon identity, deterministic cluster health, and a bounded object inventory.
+- [Daemon domain](docs/tools/daemon.md)
+- [Cluster domain](docs/tools/cluster.md)
+- [Object domain](docs/tools/object.md)
 
 Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
@@ -47,6 +36,12 @@ cmd/
   opensvc-daemon-mcp/
     main.go
     main_test.go
+
+docs/
+  tools/
+    daemon.md
+    cluster.md
+    object.md
 
 internal/
   auth/
@@ -178,31 +173,15 @@ The MCP must not accept Basic Auth or X.509 client authentication as caller auth
 
 internal/core owns OpenSVC semantics and use cases.
 
-Core responsibilities for get_daemon_identity include:
+Core responsibilities include:
 
-- selecting /api/cluster/status;
-- setting selector=**;
-- decoding the endpoint-specific shape;
-- finding the local node from daemon.nodename;
-- validating required identity fields;
-- filtering the large cluster status payload;
-- returning the stable DaemonIdentity contract.
+- selecting the exact OpenSVC API endpoint for a use case;
+- validating domain inputs and required daemon fields;
+- interpreting private endpoint-specific response shapes;
+- filtering large daemon payloads;
+- returning stable, typed, bounded business contracts.
 
-Core responsibilities for get_cluster_health include:
-
-- evaluating cluster compatibility, freeze state, and reported leaders;
-- evaluating configured and reported node status;
-- summarizing actor object availability and explicit problem states;
-- returning sorted, bounded problem details without autonomous diagnosis.
-
-Core responsibilities for list_cluster_objects include:
-
-- selecting `/api/object/path` with a native OpenSVC object selector;
-- applying defaults and validating selector, limit, and cursor bounds;
-- parsing canonical object paths into stable references;
-- sorting, deduplicating, and cursor-paginating the result.
-
-The raw cluster status response type remains private to the core package.
+Raw daemon API response types remain private to the core package. Tool-specific behavior belongs in the matching document under `docs/tools/`.
 
 ### tools
 
@@ -290,7 +269,7 @@ The end-to-end Streamable HTTP test in cmd/opensvc-daemon-mcp/main_test.go must 
 - build and start the real MCP binary on a temporary loopback port;
 - sign a test access JWT and send it on every MCP request;
 - list tools;
-- call get_daemon_identity, get_cluster_health, and list_cluster_objects;
+- call every registered tool;
 - validate structured output.
 
 ## API and security rules
@@ -321,6 +300,7 @@ Before adding a tool:
 5. implement the core use case;
 6. register the tool explicitly in main.go;
 7. add unit and end-to-end coverage.
+8. update the matching domain document under `docs/tools/`.
 
 Avoid one-to-one exposure of every OpenAPI operation.
 
@@ -363,6 +343,8 @@ Before adding a Go module:
 - Do not add build artifacts to Git.
 - Do not store credentials in the repository.
 - Keep README.md and CODEX.md aligned with the actual implementation.
+- Keep tool contracts, endpoints, examples, and domain behavior in docs/tools.
+- Update the matching domain document whenever a tool changes.
 - Update tests whenever contracts or layer boundaries change.
 
 ## Known limitations
