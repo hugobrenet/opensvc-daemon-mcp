@@ -10,14 +10,15 @@ This project is in an early development stage.
 
 The current implementation:
 
-- runs as an MCP server over stdin/stdout;
+- runs as a Streamable HTTP MCP server on a loopback address;
 - uses the official Go MCP SDK;
 - connects to a configurable OpenSVC daemon API URL;
-- authenticates daemon API requests with JWT Bearer;
+- requires an OpenSVC Bearer access JWT on every MCP request;
+- validates JWT signatures and claims before invoking the MCP handler;
+- delegates the same request-scoped JWT to the daemon API;
 - exposes one tool: get_server_identity;
 - calls GET /api/cluster/status with selector=**;
 - returns a filtered, structured identity response;
-- reloads the JWT secret file for every request so it can be rotated without restarting the MCP server;
 - supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
@@ -84,9 +85,12 @@ cmd/
 
 internal/
   auth/
-    auth.go
+    context.go
+    context_test.go
     jwt.go
     jwt_test.go
+    middleware.go
+    middleware_test.go
   client/
     client.go
     client_test.go
@@ -104,8 +108,8 @@ internal/
 
 Responsibilities:
 
-- cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the stdio transport.
-- internal/auth applies the temporary file-based JWT to daemon API requests.
+- cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the Streamable HTTP transport.
+- internal/auth validates incoming OpenSVC access JWTs, stores the delegated token in request context, and applies it to daemon API requests.
 - internal/client contains generic HTTP transport behavior and constructs the daemon HTTP client with its TLS policy.
 - internal/config loads and validates process configuration from environment variables.
 - internal/core contains OpenSVC-specific use cases and response shaping.
@@ -116,7 +120,9 @@ The MCP layer does not expose a generic call_api tool. Every capability must hav
 ## Requirements
 
 - Go 1.25.5 or later
-- Access to an OpenSVC v3 daemon API and a valid JWT
+- Access to an OpenSVC v3 daemon API
+- The public certificate or RSA public key of the OpenSVC cluster CA
+- An OpenSVC access JWT for the MCP client
 - Git
 
 ## Installation from source
@@ -148,8 +154,8 @@ The server supports these environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 | Base URL of the local OpenSVC daemon API |
-| OPENSVC_DAEMON_AUTH_METHOD | jwt | Daemon API authentication method. `none` is reserved for tests and fake daemons. |
-| OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token | File containing the raw JWT, without the `Bearer` prefix |
+| OPENSVC_MCP_LISTEN_ADDRESS | 127.0.0.1:8080 | Streamable HTTP listen address; currently restricted to a loopback IP |
+| OPENSVC_MCP_JWT_VERIFY_KEY_FILE | /var/lib/opensvc/certs/ca_certificates | OpenSVC cluster CA certificate or RSA public key used to verify JWT signatures |
 | OPENSVC_DAEMON_TLS_CA_FILE | empty | PEM CA certificates appended to the system trust store |
 | OPENSVC_DAEMON_TLS_INSECURE | false | Disable daemon certificate verification. Development only. |
 
@@ -157,8 +163,8 @@ Example:
 
 ~~~bash
 export OPENSVC_DAEMON_URL=https://127.0.0.1:1215
-export OPENSVC_DAEMON_AUTH_METHOD=jwt
-export OPENSVC_DAEMON_TOKEN_FILE=$HOME/.config/opensvc-daemon-mcp/daemon.jwt
+export OPENSVC_MCP_LISTEN_ADDRESS=127.0.0.1:8080
+export OPENSVC_MCP_JWT_VERIFY_KEY_FILE=/var/lib/opensvc/certs/ca_certificates
 ~~~
 
 For a local development daemon using a self-signed certificate, verification can be explicitly disabled:
@@ -169,38 +175,31 @@ export OPENSVC_DAEMON_TLS_INSECURE=true
 
 This disables certificate-chain and hostname verification. Never enable it when connecting to a daemon over an untrusted network. The default remains secure.
 
-The token file should be readable only by the MCP process owner. Its content is trimmed and sent as:
+The configured verification file contains public material only, but it must be readable by the MCP process. Never expose or mount `/var/lib/opensvc/certs/ca_private_key` into the MCP server.
+
+Each MCP HTTP request must contain:
 
 ~~~text
 Authorization: Bearer <jwt>
 ~~~
 
-The MCP server does not currently decode or validate the JWT. The OpenSVC daemon validates it and applies its grants. The file is read for every API request, allowing an external process to rotate it atomically without restarting the MCP server.
+The middleware accepts only JWTs signed with RS256 by the configured cluster CA. It requires valid `exp`, `sub`, `iss`, and `token_use=access` claims. The authenticated subject is bound to the MCP session to prevent session hijacking. The raw JWT remains request-scoped and is forwarded to the daemon, which independently validates it and applies its `grant` claims.
 
-This file-based authenticator is transitional. The planned HTTP transport will require an OpenSVC access JWT from every MCP caller, validate it in server middleware, and forward that same request-scoped JWT to the daemon. Basic Auth, X.509 client authentication, and fallback to a local service credential are intentionally unsupported.
-
-For an unprotected fake daemon in development, authentication can be explicitly disabled:
-
-~~~bash
-export OPENSVC_DAEMON_AUTH_METHOD=none
-~~~
-
-Do not use `none` with a real daemon.
-
-Unix socket transport is not implemented yet.
+There is no Basic Auth, X.509 client-authentication, local token file, unauthenticated mode, or fallback service credential.
 
 ## Run
 
-The server currently uses MCP stdio transport:
+Start the Streamable HTTP MCP server:
 
 ~~~bash
 OPENSVC_DAEMON_URL=https://127.0.0.1:1215 \
-OPENSVC_DAEMON_TOKEN_FILE=$HOME/.config/opensvc-daemon-mcp/daemon.jwt \
+OPENSVC_MCP_LISTEN_ADDRESS=127.0.0.1:8080 \
+OPENSVC_MCP_JWT_VERIFY_KEY_FILE=/var/lib/opensvc/certs/ca_certificates \
 OPENSVC_DAEMON_TLS_INSECURE=true \
   ./bin/opensvc-daemon-mcp
 ~~~
 
-The process waits for MCP JSON-RPC messages on stdin and writes responses to stdout. It is normally started by an MCP client rather than used interactively.
+The MCP endpoint is `http://127.0.0.1:8080/mcp`. Until server-side TLS is implemented, configuration rejects non-loopback listen addresses so Bearer tokens cannot cross an unencrypted network. `OPENSVC_DAEMON_TLS_INSECURE` affects only the separate MCP-to-daemon HTTPS connection.
 
 ## Development
 
@@ -231,12 +230,14 @@ go build -o /tmp/opensvc-daemon-mcp ./cmd/opensvc-daemon-mcp
 The test suite covers:
 
 - generic JSON GET requests;
-- JWT Bearer injection, whitespace trimming, missing or empty files, and token rotation;
+- RS256 JWT verification and required OpenSVC access-token claims;
+- rejection of missing, invalid, expired, and refresh Bearer tokens;
+- request-scoped Bearer delegation to the daemon;
 - custom server CA loading and TLS verification;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
 - the get_server_identity core use case;
-- end-to-end MCP stdio calls using JWT against a fake OpenSVC daemon.
+- end-to-end Streamable HTTP MCP calls using a delegated JWT against a fake OpenSVC daemon.
 
 ## Design principles
 
@@ -253,13 +254,11 @@ The test suite covers:
 
 Near-term work is expected to focus on:
 
-1. Streamable HTTP MCP transport over TLS;
-2. caller authentication with OpenSVC access JWTs;
-3. request-scoped JWT forwarding to the daemon;
-4. removal of the transitional JWT file authenticator;
-5. richer tests against representative OpenSVC v3 responses;
-6. additional read-only tools driven by operational use cases;
-7. audited, policy-controlled state-changing tools.
+1. TLS for the Streamable HTTP MCP server and controlled non-loopback binding;
+2. richer tests against representative OpenSVC v3 responses;
+3. stable error and audit contracts;
+4. additional read-only tools driven by operational use cases;
+5. audited, policy-controlled state-changing tools.
 
 ## License
 

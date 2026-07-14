@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,22 +26,23 @@ func TestGetJSON(t *testing.T) {
 		if got := request.Header.Get("Accept"); got != "application/json" {
 			t.Errorf("got Accept header %q, want application/json", got)
 		}
-		if got := request.Header.Get("Authorization"); got != "" {
-			t.Errorf("got unexpected Authorization header %q", got)
+		if got := request.Header.Get("Authorization"); got != "Bearer delegated-token" {
+			t.Errorf("got Authorization header %q, want delegated Bearer token", got)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(response, `{"value":"ok"}`)
 	}))
 	defer server.Close()
 
-	apiClient, err := New(server.URL, server.Client(), auth.None{})
+	apiClient, err := New(server.URL, server.Client())
 	if err != nil {
 		t.Fatalf("create API client: %v", err)
 	}
 	var output struct {
 		Value string `json:"value"`
 	}
-	err = apiClient.GetJSON(context.Background(), "/api/test", url.Values{"selector": {"**"}}, &output)
+	ctx := auth.WithBearerToken(context.Background(), "delegated-token")
+	err = apiClient.GetJSON(ctx, "/api/test", url.Values{"selector": {"**"}}, &output)
 	if err != nil {
 		t.Fatalf("GET JSON: %v", err)
 	}
@@ -58,11 +57,12 @@ func TestGetJSONHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	apiClient, err := New(server.URL, server.Client(), auth.None{})
+	apiClient, err := New(server.URL, server.Client())
 	if err != nil {
 		t.Fatalf("create API client: %v", err)
 	}
-	err = apiClient.GetJSON(context.Background(), "/api/test", nil, &struct{}{})
+	ctx := auth.WithBearerToken(context.Background(), "delegated-token")
+	err = apiClient.GetJSON(ctx, "/api/test", nil, &struct{}{})
 	if err == nil {
 		t.Fatal("GET JSON succeeded, want an error")
 	}
@@ -72,14 +72,7 @@ func TestGetJSONHTTPError(t *testing.T) {
 }
 
 func TestNewRejectsInvalidURL(t *testing.T) {
-	_, err := New("localhost:1215", nil, auth.None{})
-	if err == nil {
-		t.Fatal("New succeeded, want an error")
-	}
-}
-
-func TestNewRejectsMissingAuthenticator(t *testing.T) {
-	_, err := New("https://127.0.0.1:1215", nil, nil)
+	_, err := New("localhost:1215", nil)
 	if err == nil {
 		t.Fatal("New succeeded, want an error")
 	}
@@ -87,15 +80,6 @@ func TestNewRejectsMissingAuthenticator(t *testing.T) {
 
 func TestGetJSONDoesNotExposeJWTInHTTPError(t *testing.T) {
 	const token = "secret-jwt-value"
-	tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
-	if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
-		t.Fatalf("write token file: %v", err)
-	}
-	authenticator, err := auth.NewJWT(tokenFile)
-	if err != nil {
-		t.Fatalf("create JWT authenticator: %v", err)
-	}
-
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
 			t.Errorf("got Authorization header %q, want Bearer token", got)
@@ -104,7 +88,22 @@ func TestGetJSONDoesNotExposeJWTInHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	apiClient, err := New(server.URL, server.Client(), authenticator)
+	apiClient, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("create API client: %v", err)
+	}
+	ctx := auth.WithBearerToken(context.Background(), token)
+	err = apiClient.GetJSON(ctx, "/api/test", nil, &struct{}{})
+	if err == nil {
+		t.Fatal("GET JSON succeeded, want an error")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("error exposes JWT: %q", err)
+	}
+}
+
+func TestGetJSONRejectsMissingDelegatedJWT(t *testing.T) {
+	apiClient, err := New("https://127.0.0.1:1215", http.DefaultClient)
 	if err != nil {
 		t.Fatalf("create API client: %v", err)
 	}
@@ -112,7 +111,7 @@ func TestGetJSONDoesNotExposeJWTInHTTPError(t *testing.T) {
 	if err == nil {
 		t.Fatal("GET JSON succeeded, want an error")
 	}
-	if strings.Contains(err.Error(), token) {
-		t.Fatalf("error exposes JWT: %q", err)
+	if !strings.Contains(err.Error(), "delegated OpenSVC access JWT is missing") {
+		t.Fatalf("got error %q, want missing delegated JWT", err)
 	}
 }

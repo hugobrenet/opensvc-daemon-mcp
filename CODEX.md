@@ -24,14 +24,14 @@ GET /api/cluster/status?selector=**
 
 and returns a filtered identity response for the local daemon, cluster, node, and listener.
 
-JWT Bearer from a rotating secret file is the only implemented daemon authentication method. It is transitional and will be replaced by delegated, request-scoped OpenSVC access JWTs when the HTTP MCP transport is implemented. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
+Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
 ## Technology
 
 - Language: Go
 - Minimum current toolchain: Go 1.25.5
 - MCP SDK: github.com/modelcontextprotocol/go-sdk
-- MCP transport: stdio
+- MCP transport: Streamable HTTP on loopback
 - HTTP client: Go standard library
 - Tests: Go testing and httptest
 
@@ -47,9 +47,12 @@ cmd/
 
 internal/
   auth/
-    auth.go
+    context.go
+    context_test.go
     jwt.go
     jwt_test.go
+    middleware.go
+    middleware_test.go
   client/
     client.go
     client_test.go
@@ -75,9 +78,9 @@ The package dependency flow is:
 
 ~~~text
 main
-  -> config -> auth.Options
-  -> auth
-  -> client -> auth
+  -> config
+  -> auth middleware and JWT verifier
+  -> client -> delegated auth context
   -> tools -> core
 ~~~
 
@@ -90,12 +93,12 @@ Keep this package limited to main.go and its end-to-end main_test.go. Dependency
 It is responsible for:
 
 - reading process configuration;
-- creating the selected daemon request authenticator;
+- creating the JWT verifier and authentication middleware;
 - creating the HTTP client;
 - creating the core service;
 - creating the MCP server;
 - explicitly registering each tool domain;
-- starting the selected MCP transport.
+- starting the Streamable HTTP transport.
 
 The expected registration style is:
 
@@ -109,7 +112,7 @@ Only uncomment or add a domain when that domain actually exists.
 
 ### config
 
-internal/config owns environment-variable loading, defaults, parsing, and the exported process Config type. It produces `auth.Options` but never reads secret-file contents.
+internal/config owns environment-variable loading, defaults, parsing, and the exported process Config type. It enforces a loopback listen address while MCP server TLS is not implemented.
 
 ### client
 
@@ -123,7 +126,7 @@ Client.GetJSON is responsible for:
 - encoding query parameters;
 - sending an HTTP GET request;
 - setting JSON request headers;
-- applying the injected request authenticator;
+- applying the delegated Bearer token from request context;
 - checking the HTTP status;
 - decoding a bounded JSON response.
 
@@ -133,25 +136,17 @@ Do not add a generic MCP tool that exposes Client.GetJSON.
 
 ### auth
 
-internal/auth owns request authentication only.
+internal/auth owns the delegated authentication flow.
 
-`auth.New` constructs the configured JWT authenticator. The `none` implementation exists only for tests and fake daemons.
+The JWT verifier loads an RSA public key from the configured OpenSVC cluster CA certificate or public-key file. It accepts only RS256 access tokens with valid expiration and non-empty `sub` and `iss` claims plus `token_use=access`.
 
-The Authenticator interface applies credentials to an HTTP request. The JWT implementation:
+The middleware uses the MCP SDK bearer-auth middleware so authenticated subjects are bound to MCP sessions. It also retains the raw token in a private request-context value for delegation. The token must never be stored globally, written to disk, logged, returned, or placed in MCP arguments.
 
-- reads the configured token file on every request;
-- trims surrounding whitespace;
-- sets `Authorization: Bearer <jwt>`;
-- fails on a missing or empty file;
-- never decodes, validates, returns, or logs the token.
-
-JWT verification and grant enforcement currently belong to the OpenSVC daemon. Token creation and refresh remain outside the MCP server scope.
-
-The `none` implementation is reserved for unit tests and fake unprotected daemons. Do not use it to bypass authentication on a real daemon.
+The daemon client reads the delegated token from context and sets `Authorization: Bearer <jwt>`. The OpenSVC daemon independently verifies the token and enforces its grants.
 
 Basic Auth and X.509 client authentication are intentionally unsupported. Do not reintroduce them as daemon authentication alternatives or as fallback credentials.
 
-### planned delegated JWT flow
+### delegated JWT flow
 
 The agreed HTTP architecture is:
 
@@ -165,7 +160,7 @@ AI agent
   -> OpenSVC daemon authorization
 ~~~
 
-The middleware must validate the RS256 signature using the public certificate of the OpenSVC cluster CA, require a valid expiration and `token_use=access`, and expose the authenticated subject and grants through request context. The raw token must remain request-scoped and must never be stored globally, logged, or exposed to the model.
+The middleware validates the RS256 signature using the public certificate of the OpenSVC cluster CA, requires a valid expiration and `token_use=access`, and exposes the authenticated subject and grants through MCP token metadata. The raw token remains request-scoped and must never be exposed to the model.
 
 The MCP must not accept Basic Auth or X.509 client authentication as caller authentication. It must not fall back to a token file or service credential when a caller JWT is absent, invalid, expired, or unauthorized.
 
@@ -241,8 +236,9 @@ Explain non-obvious Go idioms when introducing them.
 Every change must preserve the complete vertical slice:
 
 ~~~text
-MCP client
-  -> stdio MCP server
+MCP client with Bearer JWT
+  -> Streamable HTTP authentication middleware
+    -> MCP server
     -> tool handler
       -> core use case
         -> HTTP client
@@ -263,22 +259,23 @@ Keep unit tests beside the package they test.
 
 Use httptest.Server for HTTP behavior. Do not require a live OpenSVC daemon for normal unit tests.
 
-The end-to-end stdio test in cmd/opensvc-daemon-mcp/main_test.go must continue to:
+The end-to-end Streamable HTTP test in cmd/opensvc-daemon-mcp/main_test.go must continue to:
 
-- start the real MCP binary through go run;
+- build and start the real MCP binary on a temporary loopback port;
+- sign a test access JWT and send it on every MCP request;
 - list tools;
 - call get_server_identity;
 - validate structured output.
 
 ## API and security rules
 
-The current client supports only JWT Bearer from a configured file. This is a temporary bridge until delegated request authentication is implemented. Secrets must never enter MCP tool arguments or results.
+The client supports only delegated OpenSVC access JWTs received from authenticated MCP requests. Secrets must never enter MCP tool arguments or results.
 
 Do not silently disable TLS certificate verification.
 
 Future authentication material must remain outside tool input and output. Language models must never receive daemon tokens, passwords, or private keys.
 
-JWT authentication to the daemon does not provide authorization for the human or agent invoking the MCP server. Until caller authorization is designed:
+The delegated JWT identifies the caller and lets the daemon enforce its OpenSVC grants. Until tool-specific policy and audit are designed:
 
 - keep tools read-only;
 - document live-daemon limitations;
@@ -312,8 +309,8 @@ Current environment:
 | Variable | Default |
 |---|---|
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 |
-| OPENSVC_DAEMON_AUTH_METHOD | jwt |
-| OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token |
+| OPENSVC_MCP_LISTEN_ADDRESS | 127.0.0.1:8080 |
+| OPENSVC_MCP_JWT_VERIFY_KEY_FILE | /var/lib/opensvc/certs/ca_certificates |
 | OPENSVC_DAEMON_TLS_CA_FILE | empty |
 | OPENSVC_DAEMON_TLS_INSECURE | false |
 
@@ -344,12 +341,11 @@ Before adding a Go module:
 
 ## Known limitations
 
-- file-based JWT is the only implemented daemon authentication method and is transitional;
-- no automatic JWT creation or refresh;
+- no MCP server-side TLS yet, so listening is restricted to loopback;
+- JWT creation and refresh remain the agent's responsibility;
 - no Unix socket transport;
-- no HTTP MCP transport;
 - one tool only;
-- no caller authorization or policy engine;
+- no tool-specific policy engine;
 - no audit subsystem;
 - no live OpenSVC integration test in the default test suite.
 

@@ -1,8 +1,9 @@
 package main
 
 import (
-	"context"
 	"log"
+	"net/http"
+	"time"
 
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/auth"
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/client"
@@ -23,7 +24,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	authenticator, err := auth.New(cfg.Auth)
+	verifier, err := auth.NewJWTVerifier(cfg.JWTVerifyKeyFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -33,7 +34,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	apiClient, err := client.New(cfg.DaemonURL, httpClient, authenticator)
+	apiClient, err := client.New(cfg.DaemonURL, httpClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -48,7 +49,22 @@ func main() {
 	)
 	tools.RegisterIdentityTools(server, service)
 
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	streamHandler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server },
+		nil,
+	)
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", auth.Middleware(verifier.Verify)(streamHandler))
+
+	httpServer := &http.Server{
+		Addr:              cfg.ListenAddress,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
+	log.Printf("%s %s listening on http://%s/mcp", serverName, serverVersion, cfg.ListenAddress)
+	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -4,14 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hugobrenet/opensvc-daemon-mcp/internal/auth"
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/client"
 )
 
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("OPENSVC_DAEMON_URL", "")
-	t.Setenv("OPENSVC_DAEMON_AUTH_METHOD", "")
-	t.Setenv("OPENSVC_DAEMON_TOKEN_FILE", "")
+	t.Setenv("OPENSVC_MCP_LISTEN_ADDRESS", "")
+	t.Setenv("OPENSVC_MCP_JWT_VERIFY_KEY_FILE", "")
 	t.Setenv("OPENSVC_DAEMON_TLS_CA_FILE", "")
 	t.Setenv("OPENSVC_DAEMON_TLS_INSECURE", "")
 
@@ -21,12 +20,10 @@ func TestLoadDefaults(t *testing.T) {
 	}
 
 	want := Config{
-		DaemonURL: defaultDaemonURL,
-		Auth: auth.Options{
-			Method:    defaultAuthMethod,
-			TokenFile: defaultTokenFile,
-		},
-		HTTP: client.HTTPOptions{TLSInsecure: defaultTLSInsecure},
+		DaemonURL:        defaultDaemonURL,
+		ListenAddress:    defaultListenAddress,
+		JWTVerifyKeyFile: defaultJWTVerifyKeyFile,
+		HTTP:             client.HTTPOptions{TLSInsecure: defaultTLSInsecure},
 	}
 	if got != want {
 		t.Errorf("got config %#v, want %#v", got, want)
@@ -35,8 +32,8 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("OPENSVC_DAEMON_URL", "https://node-a.example:1215")
-	t.Setenv("OPENSVC_DAEMON_AUTH_METHOD", "none")
-	t.Setenv("OPENSVC_DAEMON_TOKEN_FILE", "/tmp/daemon.jwt")
+	t.Setenv("OPENSVC_MCP_LISTEN_ADDRESS", "127.0.0.1:9090")
+	t.Setenv("OPENSVC_MCP_JWT_VERIFY_KEY_FILE", "/tmp/cluster-ca.pem")
 	t.Setenv("OPENSVC_DAEMON_TLS_CA_FILE", "/tmp/ca.crt")
 	t.Setenv("OPENSVC_DAEMON_TLS_INSECURE", "true")
 
@@ -46,11 +43,9 @@ func TestLoadFromEnvironment(t *testing.T) {
 	}
 
 	want := Config{
-		DaemonURL: "https://node-a.example:1215",
-		Auth: auth.Options{
-			Method:    "none",
-			TokenFile: "/tmp/daemon.jwt",
-		},
+		DaemonURL:        "https://node-a.example:1215",
+		ListenAddress:    "127.0.0.1:9090",
+		JWTVerifyKeyFile: "/tmp/cluster-ca.pem",
 		HTTP: client.HTTPOptions{
 			TLSInsecure: true,
 			TLSCAFile:   "/tmp/ca.crt",
@@ -58,6 +53,18 @@ func TestLoadFromEnvironment(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("got config %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadRejectsNonLoopbackListenAddress(t *testing.T) {
+	t.Setenv("OPENSVC_MCP_LISTEN_ADDRESS", "0.0.0.0:8080")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("got error %q, want loopback restriction", err)
 	}
 }
 
