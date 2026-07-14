@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,9 +17,19 @@ import (
 )
 
 func TestServerOverStdio(t *testing.T) {
+	const token = "test-daemon-jwt"
+	tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatalf("write daemon JWT file: %v", err)
+	}
+
 	daemonServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/cluster/status" {
 			t.Errorf("got daemon path %q, want /api/cluster/status", request.URL.Path)
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
 		}
 		response.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(response, `{
@@ -46,7 +57,12 @@ func TestServerOverStdio(t *testing.T) {
 	defer cancel()
 
 	command := exec.CommandContext(ctx, "go", "run", ".")
-	command.Env = append(os.Environ(), "OPENSVC_DAEMON_URL="+daemonServer.URL)
+	command.Env = append(
+		os.Environ(),
+		"OPENSVC_DAEMON_URL="+daemonServer.URL,
+		"OPENSVC_DAEMON_AUTH_METHOD=jwt",
+		"OPENSVC_DAEMON_TOKEN_FILE="+tokenFile,
+	)
 
 	client := mcp.NewClient(
 		&mcp.Implementation{

@@ -6,8 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hugobrenet/opensvc-daemon-mcp/internal/auth"
 )
 
 func TestGetJSON(t *testing.T) {
@@ -32,7 +36,7 @@ func TestGetJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	apiClient, err := New(server.URL, server.Client())
+	apiClient, err := New(server.URL, server.Client(), auth.None{})
 	if err != nil {
 		t.Fatalf("create API client: %v", err)
 	}
@@ -54,7 +58,7 @@ func TestGetJSONHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	apiClient, err := New(server.URL, server.Client())
+	apiClient, err := New(server.URL, server.Client(), auth.None{})
 	if err != nil {
 		t.Fatalf("create API client: %v", err)
 	}
@@ -68,8 +72,47 @@ func TestGetJSONHTTPError(t *testing.T) {
 }
 
 func TestNewRejectsInvalidURL(t *testing.T) {
-	_, err := New("localhost:1215", nil)
+	_, err := New("localhost:1215", nil, auth.None{})
 	if err == nil {
 		t.Fatal("New succeeded, want an error")
+	}
+}
+
+func TestNewRejectsMissingAuthenticator(t *testing.T) {
+	_, err := New("https://127.0.0.1:1215", nil, nil)
+	if err == nil {
+		t.Fatal("New succeeded, want an error")
+	}
+}
+
+func TestGetJSONDoesNotExposeJWTInHTTPError(t *testing.T) {
+	const token = "secret-jwt-value"
+	tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
+	if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+		t.Fatalf("write token file: %v", err)
+	}
+	authenticator, err := auth.NewJWT(tokenFile)
+	if err != nil {
+		t.Fatalf("create JWT authenticator: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Errorf("got Authorization header %q, want Bearer token", got)
+		}
+		http.Error(response, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	apiClient, err := New(server.URL, server.Client(), authenticator)
+	if err != nil {
+		t.Fatalf("create API client: %v", err)
+	}
+	err = apiClient.GetJSON(context.Background(), "/api/test", nil, &struct{}{})
+	if err == nil {
+		t.Fatal("GET JSON succeeded, want an error")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("error exposes JWT: %q", err)
 	}
 }

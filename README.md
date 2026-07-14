@@ -13,10 +13,12 @@ The current implementation:
 - runs as an MCP server over stdin/stdout;
 - uses the official Go MCP SDK;
 - connects to a configurable OpenSVC daemon API URL;
+- authenticates daemon API requests with a JWT Bearer token read from a file;
 - exposes one tool: get_server_identity;
 - calls GET /api/cluster/status with selector=**;
 - returns a filtered, structured identity response;
-- has no daemon authentication or custom TLS configuration yet.
+- reloads the token file for every request so the JWT can be rotated without restarting the MCP server;
+- has no Basic Auth, client-certificate authentication, or custom TLS configuration yet.
 
 It is not production-ready.
 
@@ -81,6 +83,10 @@ cmd/
     main_test.go
 
 internal/
+  auth/
+    auth.go
+    jwt.go
+    jwt_test.go
   client/
     client.go
     client_test.go
@@ -94,6 +100,7 @@ internal/
 Responsibilities:
 
 - cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the stdio transport.
+- internal/auth applies the configured authentication method to daemon API requests.
 - internal/client contains generic HTTP transport behavior for the OpenSVC daemon API.
 - internal/core contains OpenSVC-specific use cases and response shaping.
 - internal/tools contains MCP input/output contracts and tool registration.
@@ -103,7 +110,7 @@ The MCP layer does not expose a generic call_api tool. Every capability must hav
 ## Requirements
 
 - Go 1.25.5 or later
-- Access to an OpenSVC v3 daemon API
+- Access to an OpenSVC v3 daemon API and a valid daemon JWT
 - Git
 
 ## Installation from source
@@ -130,19 +137,39 @@ go build -o bin/opensvc-daemon-mcp ./cmd/opensvc-daemon-mcp
 
 ## Configuration
 
-The current server supports one environment variable:
+The server supports these environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 | Base URL of the local OpenSVC daemon API |
+| OPENSVC_DAEMON_AUTH_METHOD | jwt | Daemon API authentication method. `none` is reserved for tests and fake daemons. |
+| OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token | File containing the raw JWT, without the `Bearer` prefix |
 
 Example:
 
 ~~~bash
 export OPENSVC_DAEMON_URL=https://127.0.0.1:1215
+export OPENSVC_DAEMON_AUTH_METHOD=jwt
+export OPENSVC_DAEMON_TOKEN_FILE=$HOME/.config/opensvc-daemon-mcp/daemon.jwt
 ~~~
 
-Authentication headers, client certificates, custom certificate authorities, and Unix socket transport are not implemented yet.
+The token file should be readable only by the MCP process owner. Its content is trimmed and sent as:
+
+~~~text
+Authorization: Bearer <jwt>
+~~~
+
+The MCP server does not decode or validate the JWT. The OpenSVC daemon validates it and applies its grants. The file is read for every API request, allowing an external process to rotate it atomically without restarting the MCP server.
+
+For an unprotected fake daemon in development, authentication can be explicitly disabled:
+
+~~~bash
+export OPENSVC_DAEMON_AUTH_METHOD=none
+~~~
+
+Do not use `none` with a real daemon.
+
+Basic Auth, client certificates, custom certificate authorities, and Unix socket transport are not implemented yet.
 
 A protected or self-signed daemon endpoint may therefore reject the live request until those features are added.
 
@@ -151,7 +178,9 @@ A protected or self-signed daemon endpoint may therefore reject the live request
 The server currently uses MCP stdio transport:
 
 ~~~bash
-OPENSVC_DAEMON_URL=https://127.0.0.1:1215   ./bin/opensvc-daemon-mcp
+OPENSVC_DAEMON_URL=https://127.0.0.1:1215 \
+OPENSVC_DAEMON_TOKEN_FILE=$HOME/.config/opensvc-daemon-mcp/daemon.jwt \
+  ./bin/opensvc-daemon-mcp
 ~~~
 
 The process waits for MCP JSON-RPC messages on stdin and writes responses to stdout. It is normally started by an MCP client rather than used interactively.
@@ -185,6 +214,8 @@ go build -o /tmp/opensvc-daemon-mcp ./cmd/opensvc-daemon-mcp
 The test suite covers:
 
 - generic JSON GET requests;
+- JWT Bearer injection, whitespace trimming, missing or empty files, and token rotation;
+- absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
 - the get_server_identity core use case;
 - an end-to-end MCP stdio call against a fake OpenSVC daemon.
@@ -204,13 +235,14 @@ The test suite covers:
 
 Near-term work is expected to focus on:
 
-1. daemon authentication and trusted TLS configuration;
-2. Unix socket support for local development;
-3. richer tests against representative OpenSVC v3 responses;
-4. stable error contracts;
-5. additional read-only tools driven by operational use cases;
-6. HTTP MCP transport and caller authentication;
-7. audited, policy-controlled state-changing tools.
+1. Basic Auth and X.509 client-certificate authentication;
+2. trusted TLS and custom CA configuration;
+3. Unix socket support for local development;
+4. richer tests against representative OpenSVC v3 responses;
+5. stable error contracts;
+6. additional read-only tools driven by operational use cases;
+7. HTTP MCP transport and caller authentication;
+8. audited, policy-controlled state-changing tools.
 
 ## License
 

@@ -8,16 +8,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/hugobrenet/opensvc-daemon-mcp/internal/auth"
 )
 
 const maxResponseBodySize = 10 << 20
 
 type Client struct {
-	baseURL    *url.URL
-	httpClient *http.Client
+	baseURL       *url.URL
+	httpClient    *http.Client
+	authenticator auth.Authenticator
 }
 
-func New(rawBaseURL string, httpClient *http.Client) (*Client, error) {
+func New(rawBaseURL string, httpClient *http.Client, authenticator auth.Authenticator) (*Client, error) {
 	baseURL, err := url.Parse(rawBaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse OpenSVC daemon URL: %w", err)
@@ -31,7 +34,10 @@ func New(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{baseURL: baseURL, httpClient: httpClient}, nil
+	if authenticator == nil {
+		return nil, fmt.Errorf("OpenSVC daemon authenticator is required")
+	}
+	return &Client{baseURL: baseURL, httpClient: httpClient, authenticator: authenticator}, nil
 }
 
 func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, output any) error {
@@ -43,6 +49,9 @@ func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, out
 		return fmt.Errorf("create OpenSVC daemon GET request: %w", err)
 	}
 	request.Header.Set("Accept", "application/json")
+	if err := c.authenticator.Apply(request); err != nil {
+		return fmt.Errorf("authenticate OpenSVC daemon request: %w", err)
+	}
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
