@@ -10,20 +10,22 @@ The long-term goal is to support an AI operations agent that can inspect, diagno
 
 ## Current scope
 
-The current scope is intentionally limited to two read-only tools:
+The current scope is intentionally limited to three read-only tools:
 
 ~~~text
 get_daemon_identity
 get_cluster_health
+list_cluster_objects
 ~~~
 
 These tools read:
 
 ~~~text
 GET /api/cluster/status?selector=**
+GET /api/object/path?path=<selector>
 ~~~
 
-and return filtered daemon identity and deterministic cluster health responses.
+and return filtered daemon identity, deterministic cluster health, and a bounded object inventory.
 
 Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
@@ -67,9 +69,12 @@ internal/
     daemon_test.go
     cluster.go
     cluster_test.go
+    object.go
+    object_test.go
   tools/
     daemon.go
     cluster.go
+    object.go
 ~~~
 
 Do not reintroduce an internal/mcpserver package. The MCP server is intentionally created in main.go, similarly to the existing Python Collector MCP server entrypoint.
@@ -109,6 +114,7 @@ The expected registration style is:
 ~~~go
 tools.RegisterDaemonTools(server, service)
 tools.RegisterClusterTools(server, service)
+tools.RegisterObjectTools(server, service)
 // tools.RegisterNodeTools(server, service)
 ~~~
 
@@ -189,6 +195,13 @@ Core responsibilities for get_cluster_health include:
 - summarizing actor object availability and explicit problem states;
 - returning sorted, bounded problem details without autonomous diagnosis.
 
+Core responsibilities for list_cluster_objects include:
+
+- selecting `/api/object/path` with a native OpenSVC object selector;
+- applying defaults and validating selector, limit, and cursor bounds;
+- parsing canonical object paths into stable references;
+- sorting, deduplicating, and cursor-paginating the result.
+
 The raw cluster status response type remains private to the core package.
 
 ### tools
@@ -200,6 +213,7 @@ Each domain file exposes one registration function using Go exported naming:
 ~~~go
 func RegisterDaemonTools(server *mcp.Server, service *core.Service)
 func RegisterClusterTools(server *mcp.Server, service *core.Service)
+func RegisterObjectTools(server *mcp.Server, service *core.Service)
 ~~~
 
 Tool handlers should remain thin:
@@ -276,7 +290,7 @@ The end-to-end Streamable HTTP test in cmd/opensvc-daemon-mcp/main_test.go must 
 - build and start the real MCP binary on a temporary loopback port;
 - sign a test access JWT and send it on every MCP request;
 - list tools;
-- call get_daemon_identity and get_cluster_health;
+- call get_daemon_identity, get_cluster_health, and list_cluster_objects;
 - validate structured output.
 
 ## API and security rules

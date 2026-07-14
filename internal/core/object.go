@@ -1,0 +1,146 @@
+package core
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+)
+
+const (
+	defaultListClusterObjectsLimit = 100
+	maxListClusterObjectsLimit     = 200
+	maxObjectSelectorLength        = 512
+	maxObjectCursorLength          = 1024
+)
+
+type ListClusterObjectsOptions struct {
+	Selector string
+	Limit    int
+	Cursor   string
+}
+
+type ClusterObjectList struct {
+	Selector   string                   `json:"selector" jsonschema:"the OpenSVC object selector used for this page"`
+	Total      int                      `json:"total" jsonschema:"the total number of objects matching the selector and caller grants"`
+	Count      int                      `json:"count" jsonschema:"the number of objects returned in this page"`
+	Objects    []ClusterObjectReference `json:"objects" jsonschema:"sorted references to matching OpenSVC objects"`
+	NextCursor string                   `json:"next_cursor,omitempty" jsonschema:"the cursor to pass to retrieve the next page"`
+	Truncated  bool                     `json:"truncated" jsonschema:"whether more matching objects remain after this page"`
+}
+
+type ClusterObjectReference struct {
+	Path      string `json:"path" jsonschema:"the canonical OpenSVC object path"`
+	Namespace string `json:"namespace" jsonschema:"the OpenSVC object namespace"`
+	Kind      string `json:"kind" jsonschema:"the OpenSVC object kind"`
+	Name      string `json:"name" jsonschema:"the OpenSVC object name"`
+}
+
+func (s *Service) ListClusterObjects(ctx context.Context, options ListClusterObjectsOptions) (ClusterObjectList, error) {
+	selector := strings.TrimSpace(options.Selector)
+	if selector == "" {
+		selector = "**"
+	}
+	if len(selector) > maxObjectSelectorLength {
+		return ClusterObjectList{}, fmt.Errorf("object selector exceeds %d characters", maxObjectSelectorLength)
+	}
+	if len(options.Cursor) > maxObjectCursorLength {
+		return ClusterObjectList{}, fmt.Errorf("object cursor exceeds %d characters", maxObjectCursorLength)
+	}
+
+	limit := options.Limit
+	if limit == 0 {
+		limit = defaultListClusterObjectsLimit
+	}
+	if limit < 1 || limit > maxListClusterObjectsLimit {
+		return ClusterObjectList{}, fmt.Errorf("object list limit must be between 1 and %d", maxListClusterObjectsLimit)
+	}
+
+	var paths []string
+	if err := s.client.GetJSON(ctx, "/api/object/path", url.Values{"path": {selector}}, &paths); err != nil {
+		return ClusterObjectList{}, fmt.Errorf("list cluster object paths: %w", err)
+	}
+
+	references := make([]ClusterObjectReference, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		reference, err := parseClusterObjectReference(path)
+		if err != nil {
+			return ClusterObjectList{}, fmt.Errorf("parse cluster object path %q: %w", path, err)
+		}
+		seen[path] = struct{}{}
+		references = append(references, reference)
+	}
+	sort.Slice(references, func(i, j int) bool {
+		return references[i].Path < references[j].Path
+	})
+
+	start := 0
+	if options.Cursor != "" {
+		start = sort.Search(len(references), func(i int) bool {
+			return references[i].Path > options.Cursor
+		})
+	}
+	end := min(start+limit, len(references))
+	objects := append([]ClusterObjectReference(nil), references[start:end]...)
+	if objects == nil {
+		objects = []ClusterObjectReference{}
+	}
+
+	result := ClusterObjectList{
+		Selector:  selector,
+		Total:     len(references),
+		Count:     len(objects),
+		Objects:   objects,
+		Truncated: end < len(references),
+	}
+	if result.Truncated {
+		result.NextCursor = objects[len(objects)-1].Path
+	}
+	return result, nil
+}
+
+func parseClusterObjectReference(path string) (ClusterObjectReference, error) {
+	if path == "" {
+		return ClusterObjectReference{}, fmt.Errorf("path is empty")
+	}
+	if path == "cluster" {
+		return ClusterObjectReference{Path: path, Namespace: "root", Kind: "ccfg", Name: "cluster"}, nil
+	}
+
+	parts := strings.Split(path, "/")
+	reference := ClusterObjectReference{Path: path}
+	switch len(parts) {
+	case 1:
+		reference.Namespace = "root"
+		reference.Kind = "svc"
+		reference.Name = parts[0]
+	case 2:
+		if parts[0] == "" {
+			return ClusterObjectReference{}, fmt.Errorf("namespace is empty")
+		}
+		if parts[1] == "" {
+			reference.Namespace = parts[0]
+			reference.Kind = "nscfg"
+			reference.Name = "namespace"
+		} else {
+			reference.Namespace = "root"
+			reference.Kind = parts[0]
+			reference.Name = parts[1]
+		}
+	case 3:
+		if parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return ClusterObjectReference{}, fmt.Errorf("path contains an empty component")
+		}
+		reference.Namespace = parts[0]
+		reference.Kind = parts[1]
+		reference.Name = parts[2]
+	default:
+		return ClusterObjectReference{}, fmt.Errorf("path has %d components", len(parts))
+	}
+	return reference, nil
+}

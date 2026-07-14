@@ -16,9 +16,9 @@ The current implementation:
 - requires an OpenSVC Bearer access JWT on every MCP request;
 - validates JWT signatures and claims before invoking the MCP handler;
 - delegates the same request-scoped JWT to the daemon API;
-- exposes two read-only tools: get_daemon_identity and get_cluster_health;
-- calls GET /api/cluster/status with selector=**;
-- returns filtered, structured identity and cluster health responses;
+- exposes three read-only tools: get_daemon_identity, get_cluster_health, and list_cluster_objects;
+- calls bounded OpenSVC status and object-path endpoints;
+- returns filtered, structured identity, health, and object inventory responses;
 - supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
@@ -70,6 +70,12 @@ Returns a deterministic health assessment for the cluster, configured and report
 
 The tool has no input parameters and uses the same `GET /api/cluster/status?selector=**` snapshot as the daemon identity use case.
 
+### list_cluster_objects
+
+Returns a sorted, paginated inventory of OpenSVC object paths visible to the delegated caller. It calls `GET /api/object/path`, so instance configuration and status payloads are not exposed.
+
+Inputs are an optional native OpenSVC `selector` (default `**`), a `limit` from 1 to 200 (default 100), and an optional `cursor` returned by the previous page.
+
 ## Architecture
 
 The project currently follows four simple layers:
@@ -110,9 +116,12 @@ internal/
     daemon_test.go
     cluster.go
     cluster_test.go
+    object.go
+    object_test.go
   tools/
     daemon.go
     cluster.go
+    object.go
 ~~~
 
 Responsibilities:
@@ -245,8 +254,8 @@ The test suite covers:
 - custom server CA loading and TLS verification;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
-- the get_daemon_identity and get_cluster_health core use cases;
-- end-to-end Streamable HTTP MCP calls to both tools using a delegated JWT against a fake OpenSVC daemon.
+- the get_daemon_identity, get_cluster_health, and list_cluster_objects core use cases;
+- end-to-end Streamable HTTP MCP calls to all tools using a delegated JWT against a fake OpenSVC daemon.
 
 ## Design principles
 

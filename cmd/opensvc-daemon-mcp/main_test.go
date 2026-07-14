@@ -36,15 +36,14 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	})
 
 	daemonServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/cluster/status" {
-			t.Errorf("got daemon path %q, want /api/cluster/status", request.URL.Path)
-		}
 		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		response.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(response, `{
+		switch request.URL.Path {
+		case "/api/cluster/status":
+			fmt.Fprint(response, `{
 			"cluster": {
 				"config": {"id": "cluster-123", "name": "prod", "nodes": ["node-a"]},
 				"status": {"is_compat": true, "is_frozen": false},
@@ -60,6 +59,15 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 			},
 			"daemon": {"nodename": "node-a"}
 		}`)
+		case "/api/object/path":
+			if got := request.URL.Query().Get("path"); got != "**" {
+				t.Errorf("got object selector %q, want **", got)
+			}
+			fmt.Fprint(response, `["prod/svc/app", "cluster"]`)
+		default:
+			t.Errorf("got unexpected daemon path %q", request.URL.Path)
+			http.NotFound(response, request)
+		}
 	}))
 	defer daemonServer.Close()
 
@@ -129,8 +137,8 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	for _, tool := range availableTools.Tools {
 		toolNames[tool.Name] = true
 	}
-	if len(toolNames) != 2 || !toolNames["get_daemon_identity"] || !toolNames["get_cluster_health"] {
-		t.Fatalf("got tools %#v, want get_daemon_identity and get_cluster_health", availableTools.Tools)
+	if len(toolNames) != 3 || !toolNames["get_daemon_identity"] || !toolNames["get_cluster_health"] || !toolNames["list_cluster_objects"] {
+		t.Fatalf("got tools %#v, want get_daemon_identity, get_cluster_health, and list_cluster_objects", availableTools.Tools)
 	}
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
@@ -176,6 +184,28 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 	if !health.Healthy || health.ObjectSummary.Total != 1 || health.ObjectSummary.Up != 1 {
 		t.Errorf("got unexpected cluster health %#v", health)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "list_cluster_objects",
+		Arguments: mcptools.ListClusterObjectsInput{},
+	})
+	if err != nil {
+		t.Fatalf("call list_cluster_objects: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("list_cluster_objects returned an MCP tool error: %#v", result.Content)
+	}
+	data, err = json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal cluster object list structured content: %v", err)
+	}
+	var objects mcptools.ListClusterObjectsOutput
+	if err := json.Unmarshal(data, &objects); err != nil {
+		t.Fatalf("decode cluster object list structured content: %v", err)
+	}
+	if objects.Total != 2 || objects.Count != 2 || objects.Objects[0].Path != "cluster" || objects.Objects[1].Path != "prod/svc/app" {
+		t.Errorf("got unexpected cluster object list %#v", objects)
 	}
 }
 
