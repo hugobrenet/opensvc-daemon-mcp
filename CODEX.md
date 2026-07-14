@@ -10,19 +10,20 @@ The long-term goal is to support an AI operations agent that can inspect, diagno
 
 ## Current scope
 
-The current scope is intentionally limited to one read-only tool:
+The current scope is intentionally limited to two read-only tools:
 
 ~~~text
-get_server_identity
+get_daemon_identity
+get_cluster_health
 ~~~
 
-This tool reads:
+These tools read:
 
 ~~~text
 GET /api/cluster/status?selector=**
 ~~~
 
-and returns a filtered identity response for the local daemon, cluster, node, and listener.
+and return filtered daemon identity and deterministic cluster health responses.
 
 Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
@@ -62,10 +63,13 @@ internal/
     config.go
     config_test.go
   core/
-    identity.go
-    identity_test.go
+    daemon.go
+    daemon_test.go
+    cluster.go
+    cluster_test.go
   tools/
-    identity.go
+    daemon.go
+    cluster.go
 ~~~
 
 Do not reintroduce an internal/mcpserver package. The MCP server is intentionally created in main.go, similarly to the existing Python Collector MCP server entrypoint.
@@ -103,8 +107,8 @@ It is responsible for:
 The expected registration style is:
 
 ~~~go
-tools.RegisterIdentityTools(server, service)
-// tools.RegisterClusterTools(server, service)
+tools.RegisterDaemonTools(server, service)
+tools.RegisterClusterTools(server, service)
 // tools.RegisterNodeTools(server, service)
 ~~~
 
@@ -168,7 +172,7 @@ The MCP must not accept Basic Auth or X.509 client authentication as caller auth
 
 internal/core owns OpenSVC semantics and use cases.
 
-Core responsibilities for get_server_identity include:
+Core responsibilities for get_daemon_identity include:
 
 - selecting /api/cluster/status;
 - setting selector=**;
@@ -176,7 +180,14 @@ Core responsibilities for get_server_identity include:
 - finding the local node from daemon.nodename;
 - validating required identity fields;
 - filtering the large cluster status payload;
-- returning the stable ServerIdentity contract.
+- returning the stable DaemonIdentity contract.
+
+Core responsibilities for get_cluster_health include:
+
+- evaluating cluster compatibility, freeze state, and reported leaders;
+- evaluating configured and reported node status;
+- summarizing actor object availability and explicit problem states;
+- returning sorted, bounded problem details without autonomous diagnosis.
 
 The raw cluster status response type remains private to the core package.
 
@@ -187,7 +198,8 @@ internal/tools owns MCP contracts and registration.
 Each domain file exposes one registration function using Go exported naming:
 
 ~~~go
-func RegisterIdentityTools(server *mcp.Server, service *core.Service)
+func RegisterDaemonTools(server *mcp.Server, service *core.Service)
+func RegisterClusterTools(server *mcp.Server, service *core.Service)
 ~~~
 
 Tool handlers should remain thin:
@@ -264,7 +276,7 @@ The end-to-end Streamable HTTP test in cmd/opensvc-daemon-mcp/main_test.go must 
 - build and start the real MCP binary on a temporary loopback port;
 - sign a test access JWT and send it on every MCP request;
 - list tools;
-- call get_server_identity;
+- call get_daemon_identity and get_cluster_health;
 - validate structured output.
 
 ## API and security rules
@@ -344,7 +356,7 @@ Before adding a Go module:
 - no MCP server-side TLS yet, so listening is restricted to loopback;
 - JWT creation and refresh remain the agent's responsibility;
 - no Unix socket transport;
-- one tool only;
+- a limited read-only tool set;
 - no tool-specific policy engine;
 - no audit subsystem;
 - no live OpenSVC integration test in the default test suite.

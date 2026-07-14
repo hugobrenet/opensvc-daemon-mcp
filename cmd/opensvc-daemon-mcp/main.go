@@ -47,7 +47,8 @@ func main() {
 		},
 		nil,
 	)
-	tools.RegisterIdentityTools(server, service)
+	tools.RegisterDaemonTools(server, service)
+	tools.RegisterClusterTools(server, service)
 
 	streamHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },

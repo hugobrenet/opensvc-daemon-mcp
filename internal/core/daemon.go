@@ -18,14 +18,14 @@ func New(client JSONGetter) *Service {
 	return &Service{client: client}
 }
 
-type ServerIdentity struct {
-	Daemon   DaemonIdentity   `json:"daemon" jsonschema:"identity of the local OpenSVC daemon process"`
-	Cluster  ClusterIdentity  `json:"cluster" jsonschema:"identity of the OpenSVC cluster"`
-	Node     NodeIdentity     `json:"node" jsonschema:"identity and role of the local OpenSVC node"`
-	Listener ListenerIdentity `json:"listener" jsonschema:"OpenSVC daemon listener configuration"`
+type DaemonIdentity struct {
+	Daemon   DaemonProcessIdentity `json:"daemon" jsonschema:"identity of the local OpenSVC daemon process"`
+	Cluster  ClusterIdentity       `json:"cluster" jsonschema:"identity of the OpenSVC cluster"`
+	Node     NodeIdentity          `json:"node" jsonschema:"identity and role of the local OpenSVC node"`
+	Listener ListenerIdentity      `json:"listener" jsonschema:"OpenSVC daemon listener configuration"`
 }
 
-type DaemonIdentity struct {
+type DaemonProcessIdentity struct {
 	NodeName  string `json:"nodename" jsonschema:"the OpenSVC daemon node name"`
 	PID       int    `json:"pid" jsonschema:"the OpenSVC daemon process identifier"`
 	StartedAt string `json:"started_at" jsonschema:"the OpenSVC daemon start timestamp"`
@@ -65,6 +65,10 @@ type clusterStatusResponse struct {
 				Port    int    `json:"port"`
 			} `json:"listener"`
 		} `json:"config"`
+		Status struct {
+			IsCompatible bool `json:"is_compat"`
+			IsFrozen     bool `json:"is_frozen"`
+		} `json:"status"`
 		Node map[string]struct {
 			Status struct {
 				Agent        string `json:"agent"`
@@ -73,12 +77,31 @@ type clusterStatusResponse struct {
 				IsLeader     bool   `json:"is_leader"`
 				IsOverloaded bool   `json:"is_overloaded"`
 				BootedAt     string `json:"booted_at"`
+				FrozenAt     string `json:"frozen_at"`
 			} `json:"status"`
+			Monitor struct {
+				State               string `json:"state"`
+				GlobalExpect        string `json:"global_expect"`
+				LocalExpect         string `json:"local_expect"`
+				OrchestrationID     string `json:"orchestration_id"`
+				OrchestrationIsDone bool   `json:"orchestration_is_done"`
+				UpdatedAt           string `json:"updated_at"`
+			} `json:"monitor"`
 			Daemon struct {
 				PID       int    `json:"pid"`
 				StartedAt string `json:"started_at"`
 			} `json:"daemon"`
 		} `json:"node"`
+		Object map[string]struct {
+			Availability     *string  `json:"avail"`
+			Overall          string   `json:"overall"`
+			Provisioned      string   `json:"provisioned"`
+			Frozen           string   `json:"frozen"`
+			PlacementState   string   `json:"placement_state"`
+			Orchestrate      string   `json:"orchestrate"`
+			UpInstancesCount int      `json:"up_instances_count"`
+			Scope            []string `json:"scope"`
+		} `json:"object"`
 	} `json:"cluster"`
 	Daemon struct {
 		NodeName string `json:"nodename"`
@@ -86,27 +109,35 @@ type clusterStatusResponse struct {
 	} `json:"daemon"`
 }
 
-func (s *Service) GetServerIdentity(ctx context.Context) (ServerIdentity, error) {
+func (s *Service) getClusterStatus(ctx context.Context) (clusterStatusResponse, error) {
 	var status clusterStatusResponse
 	err := s.client.GetJSON(ctx, "/api/cluster/status", url.Values{"selector": {"**"}}, &status)
 	if err != nil {
-		return ServerIdentity{}, fmt.Errorf("get server identity: %w", err)
+		return clusterStatusResponse{}, fmt.Errorf("get cluster status: %w", err)
+	}
+	return status, nil
+}
+
+func (s *Service) GetDaemonIdentity(ctx context.Context) (DaemonIdentity, error) {
+	status, err := s.getClusterStatus(ctx)
+	if err != nil {
+		return DaemonIdentity{}, fmt.Errorf("get daemon identity: %w", err)
 	}
 
 	nodeName := status.Daemon.NodeName
 	if nodeName == "" {
-		return ServerIdentity{}, fmt.Errorf("cluster status has no daemon nodename")
+		return DaemonIdentity{}, fmt.Errorf("cluster status has no daemon nodename")
 	}
 	node, ok := status.Cluster.Node[nodeName]
 	if !ok {
-		return ServerIdentity{}, fmt.Errorf("cluster status has no data for local node %q", nodeName)
+		return DaemonIdentity{}, fmt.Errorf("cluster status has no data for local node %q", nodeName)
 	}
 	if node.Status.Agent == "" {
-		return ServerIdentity{}, fmt.Errorf("cluster status has no agent version for local node %q", nodeName)
+		return DaemonIdentity{}, fmt.Errorf("cluster status has no agent version for local node %q", nodeName)
 	}
 
-	return ServerIdentity{
-		Daemon:   DaemonIdentity{NodeName: nodeName, PID: node.Daemon.PID, StartedAt: node.Daemon.StartedAt, Routines: status.Daemon.Routines},
+	return DaemonIdentity{
+		Daemon:   DaemonProcessIdentity{NodeName: nodeName, PID: node.Daemon.PID, StartedAt: node.Daemon.StartedAt, Routines: status.Daemon.Routines},
 		Cluster:  ClusterIdentity{ID: status.Cluster.Config.ID, Name: status.Cluster.Config.Name, Nodes: status.Cluster.Config.Nodes, Quorum: status.Cluster.Config.Quorum},
 		Node:     NodeIdentity{AgentVersion: node.Status.Agent, APIVersion: node.Status.API, Compat: node.Status.Compat, IsLeader: node.Status.IsLeader, IsOverloaded: node.Status.IsOverloaded, BootedAt: node.Status.BootedAt},
 		Listener: ListenerIdentity{Address: status.Cluster.Config.Listener.Address, Port: status.Cluster.Config.Listener.Port},

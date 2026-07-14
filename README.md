@@ -16,16 +16,16 @@ The current implementation:
 - requires an OpenSVC Bearer access JWT on every MCP request;
 - validates JWT signatures and claims before invoking the MCP handler;
 - delegates the same request-scoped JWT to the daemon API;
-- exposes one tool: get_server_identity;
+- exposes two read-only tools: get_daemon_identity and get_cluster_health;
 - calls GET /api/cluster/status with selector=**;
-- returns a filtered, structured identity response;
+- returns filtered, structured identity and cluster health responses;
 - supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
 
-## Current tool
+## Current tools
 
-### get_server_identity
+### get_daemon_identity
 
 Returns identity information reported by the local OpenSVC daemon.
 
@@ -64,6 +64,12 @@ Example structured output:
 
 The full cluster status payload is intentionally not exposed. Object, instance, pool, schedule, heartbeat, and private node configuration data will be handled by dedicated tools if needed.
 
+### get_cluster_health
+
+Returns a deterministic health assessment for the cluster, configured and reported nodes, and actor objects. It reports explicit issues and bounded summaries; problem objects are sorted by path and limited to 100 entries.
+
+The tool has no input parameters and uses the same `GET /api/cluster/status?selector=**` snapshot as the daemon identity use case.
+
 ## Architecture
 
 The project currently follows four simple layers:
@@ -100,10 +106,13 @@ internal/
     config.go
     config_test.go
   core/
-    identity.go
-    identity_test.go
+    daemon.go
+    daemon_test.go
+    cluster.go
+    cluster_test.go
   tools/
-    identity.go
+    daemon.go
+    cluster.go
 ~~~
 
 Responsibilities:
@@ -236,8 +245,8 @@ The test suite covers:
 - custom server CA loading and TLS verification;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
-- the get_server_identity core use case;
-- end-to-end Streamable HTTP MCP calls using a delegated JWT against a fake OpenSVC daemon.
+- the get_daemon_identity and get_cluster_health core use cases;
+- end-to-end Streamable HTTP MCP calls to both tools using a delegated JWT against a fake OpenSVC daemon.
 
 ## Design principles
 

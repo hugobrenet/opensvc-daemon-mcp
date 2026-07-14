@@ -23,7 +23,7 @@ func (f *fakeJSONGetter) GetJSON(_ context.Context, path string, query url.Value
 	return json.Unmarshal([]byte(f.payload), output)
 }
 
-func TestGetServerIdentity(t *testing.T) {
+func TestGetDaemonIdentity(t *testing.T) {
 	service := New(&fakeJSONGetter{t: t, payload: `{
 		"cluster": {
 			"config": {
@@ -44,9 +44,9 @@ func TestGetServerIdentity(t *testing.T) {
 		"daemon": {"nodename": "node-a", "routines": 121}
 	}`})
 
-	identity, err := service.GetServerIdentity(context.Background())
+	identity, err := service.GetDaemonIdentity(context.Background())
 	if err != nil {
-		t.Fatalf("get server identity: %v", err)
+		t.Fatalf("get daemon identity: %v", err)
 	}
 	if identity.Daemon.NodeName != "node-a" {
 		t.Errorf("got nodename %q, want node-a", identity.Daemon.NodeName)

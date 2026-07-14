@@ -46,8 +46,17 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 		response.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(response, `{
 			"cluster": {
-				"config": {"id": "cluster-123", "name": "prod"},
-				"node": {"node-a": {"status": {"agent": "v3.0.0"}}}
+				"config": {"id": "cluster-123", "name": "prod", "nodes": ["node-a"]},
+				"status": {"is_compat": true, "is_frozen": false},
+				"node": {"node-a": {
+					"status": {"agent": "v3.0.0", "is_leader": true, "frozen_at": "0001-01-01T00:00:00Z"},
+					"monitor": {"state": "idle"}
+				}},
+				"object": {"prod/svc/app": {
+					"avail": "up", "overall": "up", "provisioned": "true",
+					"frozen": "unfrozen", "placement_state": "optimal", "up_instances_count": 1,
+					"scope": ["node-a"]
+				}}
 			},
 			"daemon": {"nodename": "node-a"}
 		}`)
@@ -116,31 +125,57 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list MCP tools: %v", err)
 	}
-	if len(availableTools.Tools) != 1 || availableTools.Tools[0].Name != "get_server_identity" {
-		t.Fatalf("got tools %#v, want get_server_identity", availableTools.Tools)
+	toolNames := make(map[string]bool, len(availableTools.Tools))
+	for _, tool := range availableTools.Tools {
+		toolNames[tool.Name] = true
+	}
+	if len(toolNames) != 2 || !toolNames["get_daemon_identity"] || !toolNames["get_cluster_health"] {
+		t.Fatalf("got tools %#v, want get_daemon_identity and get_cluster_health", availableTools.Tools)
 	}
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "get_server_identity",
-		Arguments: mcptools.GetServerIdentityInput{},
+		Name:      "get_daemon_identity",
+		Arguments: mcptools.GetDaemonIdentityInput{},
 	})
 	if err != nil {
-		t.Fatalf("call get_server_identity: %v", err)
+		t.Fatalf("call get_daemon_identity: %v", err)
 	}
 	if result.IsError {
-		t.Fatalf("get_server_identity returned an MCP tool error: %#v", result.Content)
+		t.Fatalf("get_daemon_identity returned an MCP tool error: %#v", result.Content)
 	}
 
 	data, err := json.Marshal(result.StructuredContent)
 	if err != nil {
 		t.Fatalf("marshal structured content: %v", err)
 	}
-	var identity mcptools.GetServerIdentityOutput
+	var identity mcptools.GetDaemonIdentityOutput
 	if err := json.Unmarshal(data, &identity); err != nil {
 		t.Fatalf("decode structured content: %v", err)
 	}
 	if identity.Daemon.NodeName != "node-a" || identity.Cluster.ID != "cluster-123" || identity.Node.AgentVersion != "v3.0.0" {
 		t.Errorf("got unexpected identity %#v", identity)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_cluster_health",
+		Arguments: mcptools.GetClusterHealthInput{},
+	})
+	if err != nil {
+		t.Fatalf("call get_cluster_health: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("get_cluster_health returned an MCP tool error: %#v", result.Content)
+	}
+	data, err = json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal cluster health structured content: %v", err)
+	}
+	var health mcptools.GetClusterHealthOutput
+	if err := json.Unmarshal(data, &health); err != nil {
+		t.Fatalf("decode cluster health structured content: %v", err)
+	}
+	if !health.Healthy || health.ObjectSummary.Total != 1 || health.ObjectSummary.Up != 1 {
+		t.Errorf("got unexpected cluster health %#v", health)
 	}
 }
 
