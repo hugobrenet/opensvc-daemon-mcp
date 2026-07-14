@@ -21,28 +21,6 @@ func TestNew(t *testing.T) {
 			},
 		},
 		{
-			name: "Basic",
-			options: Options{
-				Method:            "basic",
-				BasicUsername:     "operator",
-				BasicPasswordFile: "/run/password",
-			},
-			check: func(t *testing.T, authenticator Authenticator) {
-				if _, ok := authenticator.(*Basic); !ok {
-					t.Fatalf("got authenticator %T, want *Basic", authenticator)
-				}
-			},
-		},
-		{
-			name:    "X509",
-			options: Options{Method: "x509"},
-			check: func(t *testing.T, authenticator Authenticator) {
-				if _, ok := authenticator.(X509); !ok {
-					t.Fatalf("got authenticator %T, want X509", authenticator)
-				}
-			},
-		},
-		{
 			name:    "none",
 			options: Options{Method: "none"},
 			check: func(t *testing.T, authenticator Authenticator) {
@@ -65,11 +43,15 @@ func TestNew(t *testing.T) {
 }
 
 func TestNewRejectsUnsupportedMethod(t *testing.T) {
-	_, err := New(Options{Method: "unknown"})
-	if err == nil {
-		t.Fatal("New succeeded, want an error")
-	}
-	if !strings.Contains(err.Error(), "unknown") {
-		t.Fatalf("got error %q, want method name", err)
+	for _, method := range []string{"basic", "x509", "unknown"} {
+		t.Run(method, func(t *testing.T) {
+			_, err := New(Options{Method: method})
+			if err == nil {
+				t.Fatal("New succeeded, want an error")
+			}
+			if !strings.Contains(err.Error(), method) {
+				t.Fatalf("got error %q, want method name", err)
+			}
+		})
 	}
 }

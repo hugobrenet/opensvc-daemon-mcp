@@ -24,7 +24,7 @@ GET /api/cluster/status?selector=**
 
 and returns a filtered identity response for the local daemon, cluster, node, and listener.
 
-JWT Bearer and Basic Auth from rotating secret files are implemented. Do not add additional tools, authentication modes, transports, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
+JWT Bearer from a rotating secret file is the only implemented daemon authentication method. It is transitional and will be replaced by delegated, request-scoped OpenSVC access JWTs when the HTTP MCP transport is implemented. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
 ## Technology
 
@@ -48,8 +48,6 @@ cmd/
 internal/
   auth/
     auth.go
-    basic.go
-    basic_test.go
     jwt.go
     jwt_test.go
   client/
@@ -117,7 +115,7 @@ internal/config owns environment-variable loading, defaults, parsing, and the ex
 
 internal/client is transport-only.
 
-Client.NewHTTPClient constructs the standard HTTP client, timeout, server trust roots, client certificate, private key, and optional development-only TLS verification bypass. It must fail fast on incomplete or invalid TLS files.
+Client.NewHTTPClient constructs the standard HTTP client, timeout, server trust roots, and optional development-only TLS verification bypass. It must fail fast on invalid TLS CA files.
 
 Client.GetJSON is responsible for:
 
@@ -137,7 +135,7 @@ Do not add a generic MCP tool that exposes Client.GetJSON.
 
 internal/auth owns request authentication only.
 
-`auth.New` selects an Authenticator from `auth.Options`. Authentication-specific validation remains in the JWT and Basic constructors. The X509 authenticator intentionally leaves request headers unchanged because its identity is configured in the TLS client.
+`auth.New` constructs the configured JWT authenticator. The `none` implementation exists only for tests and fake daemons.
 
 The Authenticator interface applies credentials to an HTTP request. The JWT implementation:
 
@@ -147,21 +145,29 @@ The Authenticator interface applies credentials to an HTTP request. The JWT impl
 - fails on a missing or empty file;
 - never decodes, validates, returns, or logs the token.
 
-JWT verification and grant enforcement belong to the OpenSVC daemon. Token creation and refresh are outside the current MCP server scope.
-
-The Basic Auth implementation:
-
-- reads the configured password file on every request;
-- removes one trailing LF or CRLF line ending but preserves other whitespace;
-- uses `http.Request.SetBasicAuth` rather than building the header manually;
-- fails on a missing or empty username or password file;
-- never returns or logs the password.
+JWT verification and grant enforcement currently belong to the OpenSVC daemon. Token creation and refresh remain outside the MCP server scope.
 
 The `none` implementation is reserved for unit tests and fake unprotected daemons. Do not use it to bypass authentication on a real daemon.
 
-Prefer a dedicated least-privileged OpenSVC `system/usr/<username>` object for Basic Auth. Do not use node-name plus cluster-secret authentication merely for convenience, because it grants root access.
+Basic Auth and X.509 client authentication are intentionally unsupported. Do not reintroduce them as daemon authentication alternatives or as fallback credentials.
 
-For X.509, the client certificate Subject Common Name must match a `system/usr/<username>` object. OpenSVC verifies the certificate for TLS client authentication against its configured CAs, then loads grants from that user object.
+### planned delegated JWT flow
+
+The agreed HTTP architecture is:
+
+~~~text
+AI agent
+  -> Authorization: Bearer <OpenSVC access JWT>
+  -> MCP HTTP authentication middleware
+  -> request context
+  -> MCP tool
+  -> OpenSVC API client with the same JWT
+  -> OpenSVC daemon authorization
+~~~
+
+The middleware must validate the RS256 signature using the public certificate of the OpenSVC cluster CA, require a valid expiration and `token_use=access`, and expose the authenticated subject and grants through request context. The raw token must remain request-scoped and must never be stored globally, logged, or exposed to the model.
+
+The MCP must not accept Basic Auth or X.509 client authentication as caller authentication. It must not fall back to a token file or service credential when a caller JWT is absent, invalid, expired, or unauthorized.
 
 ### core
 
@@ -266,11 +272,11 @@ The end-to-end stdio test in cmd/opensvc-daemon-mcp/main_test.go must continue t
 
 ## API and security rules
 
-The current client supports JWT Bearer, Basic Auth, and X.509 client certificates, with JWT as the default. Secrets come only from configured files and must never enter MCP tool arguments or results.
+The current client supports only JWT Bearer from a configured file. This is a temporary bridge until delegated request authentication is implemented. Secrets must never enter MCP tool arguments or results.
 
 Do not silently disable TLS certificate verification.
 
-Future authentication material must remain outside tool input and output. Language models must never receive daemon tokens, passwords, private keys, or client certificates.
+Future authentication material must remain outside tool input and output. Language models must never receive daemon tokens, passwords, or private keys.
 
 JWT authentication to the daemon does not provide authorization for the human or agent invoking the MCP server. Until caller authorization is designed:
 
@@ -308,10 +314,6 @@ Current environment:
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 |
 | OPENSVC_DAEMON_AUTH_METHOD | jwt |
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token |
-| OPENSVC_DAEMON_BASIC_USERNAME | empty |
-| OPENSVC_DAEMON_BASIC_PASSWORD_FILE | /run/opensvc-daemon-mcp/password |
-| OPENSVC_DAEMON_X509_CERT_FILE | /run/opensvc-daemon-mcp/client.crt for x509 |
-| OPENSVC_DAEMON_X509_KEY_FILE | /run/opensvc-daemon-mcp/client.key for x509 |
 | OPENSVC_DAEMON_TLS_CA_FILE | empty |
 | OPENSVC_DAEMON_TLS_INSECURE | false |
 
@@ -342,9 +344,8 @@ Before adding a Go module:
 
 ## Known limitations
 
-- JWT, Basic Auth, and X.509 client certificates are implemented daemon authentication methods;
+- file-based JWT is the only implemented daemon authentication method and is transitional;
 - no automatic JWT creation or refresh;
-- client certificates and keys are loaded at startup and are not dynamically rotated;
 - no Unix socket transport;
 - no HTTP MCP transport;
 - one tool only;

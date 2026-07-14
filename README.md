@@ -13,11 +13,11 @@ The current implementation:
 - runs as an MCP server over stdin/stdout;
 - uses the official Go MCP SDK;
 - connects to a configurable OpenSVC daemon API URL;
-- authenticates daemon API requests with JWT Bearer, Basic Auth, or an X.509 client certificate;
+- authenticates daemon API requests with JWT Bearer;
 - exposes one tool: get_server_identity;
 - calls GET /api/cluster/status with selector=**;
 - returns a filtered, structured identity response;
-- reloads JWT and Basic Auth secret files for every request so credentials can be rotated without restarting the MCP server;
+- reloads the JWT secret file for every request so it can be rotated without restarting the MCP server;
 - supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
@@ -85,8 +85,6 @@ cmd/
 internal/
   auth/
     auth.go
-    basic.go
-    basic_test.go
     jwt.go
     jwt_test.go
   client/
@@ -107,7 +105,7 @@ internal/
 Responsibilities:
 
 - cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the stdio transport.
-- internal/auth selects and applies the configured authentication method to daemon API requests.
+- internal/auth applies the temporary file-based JWT to daemon API requests.
 - internal/client contains generic HTTP transport behavior and constructs the daemon HTTP client with its TLS policy.
 - internal/config loads and validates process configuration from environment variables.
 - internal/core contains OpenSVC-specific use cases and response shaping.
@@ -118,7 +116,7 @@ The MCP layer does not expose a generic call_api tool. Every capability must hav
 ## Requirements
 
 - Go 1.25.5 or later
-- Access to an OpenSVC v3 daemon API and valid JWT, Basic Auth, or X.509 credentials
+- Access to an OpenSVC v3 daemon API and a valid JWT
 - Git
 
 ## Installation from source
@@ -152,10 +150,6 @@ The server supports these environment variables:
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 | Base URL of the local OpenSVC daemon API |
 | OPENSVC_DAEMON_AUTH_METHOD | jwt | Daemon API authentication method. `none` is reserved for tests and fake daemons. |
 | OPENSVC_DAEMON_TOKEN_FILE | /run/opensvc-daemon-mcp/token | File containing the raw JWT, without the `Bearer` prefix |
-| OPENSVC_DAEMON_BASIC_USERNAME | empty | Basic Auth username; required when the method is `basic` |
-| OPENSVC_DAEMON_BASIC_PASSWORD_FILE | /run/opensvc-daemon-mcp/password | File containing the Basic Auth password |
-| OPENSVC_DAEMON_X509_CERT_FILE | /run/opensvc-daemon-mcp/client.crt for `x509` | PEM client certificate chain |
-| OPENSVC_DAEMON_X509_KEY_FILE | /run/opensvc-daemon-mcp/client.key for `x509` | PEM client private key |
 | OPENSVC_DAEMON_TLS_CA_FILE | empty | PEM CA certificates appended to the system trust store |
 | OPENSVC_DAEMON_TLS_INSECURE | false | Disable daemon certificate verification. Development only. |
 
@@ -181,41 +175,9 @@ The token file should be readable only by the MCP process owner. Its content is 
 Authorization: Bearer <jwt>
 ~~~
 
-The MCP server does not decode or validate the JWT. The OpenSVC daemon validates it and applies its grants. The file is read for every API request, allowing an external process to rotate it atomically without restarting the MCP server.
+The MCP server does not currently decode or validate the JWT. The OpenSVC daemon validates it and applies its grants. The file is read for every API request, allowing an external process to rotate it atomically without restarting the MCP server.
 
-Basic Auth example:
-
-~~~bash
-export OPENSVC_DAEMON_AUTH_METHOD=basic
-export OPENSVC_DAEMON_BASIC_USERNAME=operator
-export OPENSVC_DAEMON_BASIC_PASSWORD_FILE=/run/opensvc-daemon-mcp/password
-~~~
-
-The password file is read for every request. One trailing LF or CRLF line ending is removed, while other whitespace is preserved because it may be part of the password. JWTs and passwords must never be passed through tool arguments.
-
-OpenSVC v3 accepts Basic Auth for a `system/usr/<username>` object whose `password` key matches and whose `grant` values define API permissions. Node-name plus cluster-secret authentication also exists, but a dedicated least-privileged `usr` object is recommended for the MCP server.
-
-For example, `guest` is sufficient for the current read-only `get_server_identity` tool:
-
-~~~bash
-sudo om system/usr/opensvc-daemon-mcp create --kw grant=guest
-sudo om system/usr/opensvc-daemon-mcp key add \
-  --name password \
-  --from /run/opensvc-daemon-mcp/password
-~~~
-
-Review and extend this grant only when a new tool demonstrates that it requires additional permissions.
-
-X.509 client-authentication example:
-
-~~~bash
-export OPENSVC_DAEMON_AUTH_METHOD=x509
-export OPENSVC_DAEMON_X509_CERT_FILE=/run/opensvc-daemon-mcp/client.crt
-export OPENSVC_DAEMON_X509_KEY_FILE=/run/opensvc-daemon-mcp/client.key
-export OPENSVC_DAEMON_TLS_CA_FILE=/run/opensvc-daemon-mcp/ca.crt
-~~~
-
-The client certificate must permit TLS client authentication, chain to a CA trusted by the OpenSVC daemon, and use the OpenSVC username as its Subject Common Name. A matching `system/usr/<common-name>` object provides the grants. The certificate and key are loaded when the MCP process starts, so rotating them currently requires a restart.
+This file-based authenticator is transitional. The planned HTTP transport will require an OpenSVC access JWT from every MCP caller, validate it in server middleware, and forward that same request-scoped JWT to the daemon. Basic Auth, X.509 client authentication, and fallback to a local service credential are intentionally unsupported.
 
 For an unprotected fake daemon in development, authentication can be explicitly disabled:
 
@@ -270,12 +232,11 @@ The test suite covers:
 
 - generic JSON GET requests;
 - JWT Bearer injection, whitespace trimming, missing or empty files, and token rotation;
-- Basic Auth injection, line-ending handling, missing or empty files, and password rotation;
-- custom server CA loading and mutual TLS with a required client certificate;
+- custom server CA loading and TLS verification;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
 - the get_server_identity core use case;
-- end-to-end MCP stdio calls using JWT and Basic Auth against a fake OpenSVC daemon.
+- end-to-end MCP stdio calls using JWT against a fake OpenSVC daemon.
 
 ## Design principles
 
@@ -292,12 +253,12 @@ The test suite covers:
 
 Near-term work is expected to focus on:
 
-1. certificate rotation without process restart;
-2. Unix socket support for local development;
-3. richer tests against representative OpenSVC v3 responses;
-4. stable error contracts;
-5. additional read-only tools driven by operational use cases;
-6. HTTP MCP transport and caller authentication;
+1. Streamable HTTP MCP transport over TLS;
+2. caller authentication with OpenSVC access JWTs;
+3. request-scoped JWT forwarding to the daemon;
+4. removal of the transitional JWT file authenticator;
+5. richer tests against representative OpenSVC v3 responses;
+6. additional read-only tools driven by operational use cases;
 7. audited, policy-controlled state-changing tools.
 
 ## License

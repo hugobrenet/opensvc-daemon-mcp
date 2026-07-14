@@ -17,47 +17,15 @@ import (
 )
 
 func TestServerOverStdio(t *testing.T) {
-	tests := []struct {
-		name              string
-		environment       func(*testing.T) []string
-		wantAuthorization string
-	}{
-		{
-			name: "JWT",
-			environment: func(t *testing.T) []string {
-				tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
-				if err := os.WriteFile(tokenFile, []byte("test-daemon-jwt\n"), 0o600); err != nil {
-					t.Fatalf("write daemon JWT file: %v", err)
-				}
-				return []string{
-					"OPENSVC_DAEMON_AUTH_METHOD=jwt",
-					"OPENSVC_DAEMON_TOKEN_FILE=" + tokenFile,
-				}
-			},
-			wantAuthorization: "Bearer test-daemon-jwt",
-		},
-		{
-			name: "Basic",
-			environment: func(t *testing.T) []string {
-				passwordFile := filepath.Join(t.TempDir(), "daemon.password")
-				if err := os.WriteFile(passwordFile, []byte("test-password\n"), 0o600); err != nil {
-					t.Fatalf("write daemon password file: %v", err)
-				}
-				return []string{
-					"OPENSVC_DAEMON_AUTH_METHOD=basic",
-					"OPENSVC_DAEMON_BASIC_USERNAME=test-user",
-					"OPENSVC_DAEMON_BASIC_PASSWORD_FILE=" + passwordFile,
-				}
-			},
-			wantAuthorization: "Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=",
-		},
+	tokenFile := filepath.Join(t.TempDir(), "daemon.jwt")
+	if err := os.WriteFile(tokenFile, []byte("test-daemon-jwt\n"), 0o600); err != nil {
+		t.Fatalf("write daemon JWT file: %v", err)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			testServerOverStdio(t, test.environment(t), test.wantAuthorization)
-		})
-	}
+	testServerOverStdio(t, []string{
+		"OPENSVC_DAEMON_AUTH_METHOD=jwt",
+		"OPENSVC_DAEMON_TOKEN_FILE=" + tokenFile,
+	}, "Bearer test-daemon-jwt")
 }
 
 func testServerOverStdio(t *testing.T, authEnvironment []string, wantAuthorization string) {
