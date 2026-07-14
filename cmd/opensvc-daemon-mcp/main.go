@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 
+	"github.com/hugobrenet/opensvc-daemon-mcp/internal/auth"
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/client"
+	"github.com/hugobrenet/opensvc-daemon-mcp/internal/config"
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/core"
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/tools"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,19 +18,19 @@ const (
 )
 
 func main() {
-	cfg, err := loadConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	authenticator, err := newAuthenticator(cfg.auth)
+	authenticator, err := auth.New(cfg.Auth)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	httpClient := newHTTPClient(cfg.tlsInsecure)
+	httpClient := client.NewHTTPClient(cfg.TLSInsecure)
 
-	apiClient, err := client.New(cfg.daemonURL, httpClient, authenticator)
+	apiClient, err := client.New(cfg.DaemonURL, httpClient, authenticator)
 	if err != nil {
 		log.Fatal(err)
 	}

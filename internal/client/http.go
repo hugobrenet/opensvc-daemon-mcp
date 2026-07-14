@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"crypto/tls"
@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-func newHTTPClient(tlsInsecure bool) *http.Client {
+// NewHTTPClient constructs the HTTP client used to contact the OpenSVC daemon.
+func NewHTTPClient(tlsInsecure bool) *http.Client {
 	client := &http.Client{Timeout: 20 * time.Second}
 	if !tlsInsecure {
 		return client

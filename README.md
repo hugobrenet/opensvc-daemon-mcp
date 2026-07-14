@@ -79,11 +79,6 @@ Repository layout:
 ~~~text
 cmd/
   opensvc-daemon-mcp/
-    authenticator.go
-    config.go
-    config_test.go
-    http_client.go
-    http_client_test.go
     main.go
     main_test.go
 
@@ -97,6 +92,11 @@ internal/
   client/
     client.go
     client_test.go
+    http.go
+    http_test.go
+  config/
+    config.go
+    config_test.go
   core/
     identity.go
     identity_test.go
@@ -106,12 +106,10 @@ internal/
 
 Responsibilities:
 
-- cmd/opensvc-daemon-mcp/config.go loads and validates process configuration from environment variables.
-- cmd/opensvc-daemon-mcp/authenticator.go selects the configured daemon request authenticator.
-- cmd/opensvc-daemon-mcp/http_client.go constructs the daemon HTTP client and its TLS policy.
 - cmd/opensvc-daemon-mcp/main.go builds the dependencies, creates the MCP server, registers tool domains, and starts the stdio transport.
-- internal/auth applies the configured authentication method to daemon API requests.
-- internal/client contains generic HTTP transport behavior for the OpenSVC daemon API.
+- internal/auth selects and applies the configured authentication method to daemon API requests.
+- internal/client contains generic HTTP transport behavior and constructs the daemon HTTP client with its TLS policy.
+- internal/config loads and validates process configuration from environment variables.
 - internal/core contains OpenSVC-specific use cases and response shaping.
 - internal/tools contains MCP input/output contracts and tool registration.
 

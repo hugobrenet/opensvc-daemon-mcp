@@ -1,6 +1,17 @@
 package auth
 
-import "net/http"
+import (
+	"fmt"
+	"net/http"
+)
+
+// Options describes the daemon request authentication configuration.
+type Options struct {
+	Method            string
+	TokenFile         string
+	BasicUsername     string
+	BasicPasswordFile string
+}
 
 // Authenticator applies daemon authentication to an HTTP request.
 type Authenticator interface {
@@ -12,4 +23,18 @@ type None struct{}
 
 func (None) Apply(_ *http.Request) error {
 	return nil
+}
+
+// New selects and constructs the configured request authenticator.
+func New(options Options) (Authenticator, error) {
+	switch options.Method {
+	case "jwt":
+		return NewJWT(options.TokenFile)
+	case "basic":
+		return NewBasic(options.BasicUsername, options.BasicPasswordFile)
+	case "none":
+		return None{}, nil
+	default:
+		return nil, fmt.Errorf("unsupported OpenSVC daemon authentication method %q", options.Method)
+	}
 }

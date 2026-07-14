@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"net/http"
@@ -12,13 +12,13 @@ func TestHTTPClientTLSVerification(t *testing.T) {
 	}))
 	defer server.Close()
 
-	verifiedResponse, err := newHTTPClient(false).Get(server.URL)
+	verifiedResponse, err := NewHTTPClient(false).Get(server.URL)
 	if err == nil {
 		verifiedResponse.Body.Close()
 		t.Fatal("verified TLS request succeeded with an untrusted certificate")
 	}
 
-	insecureResponse, err := newHTTPClient(true).Get(server.URL)
+	insecureResponse, err := NewHTTPClient(true).Get(server.URL)
 	if err != nil {
 		t.Fatalf("explicitly insecure TLS request failed: %v", err)
 	}

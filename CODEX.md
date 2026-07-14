@@ -42,11 +42,6 @@ Prefer the Go standard library and keep dependencies minimal.
 ~~~text
 cmd/
   opensvc-daemon-mcp/
-    authenticator.go
-    config.go
-    config_test.go
-    http_client.go
-    http_client_test.go
     main.go
     main_test.go
 
@@ -60,6 +55,11 @@ internal/
   client/
     client.go
     client_test.go
+    http.go
+    http_test.go
+  config/
+    config.go
+    config_test.go
   core/
     identity.go
     identity_test.go
@@ -73,23 +73,21 @@ Do not add a global models package without a demonstrated shared-model requireme
 
 ## Architecture
 
-The dependency flow is:
+The package dependency flow is:
 
 ~~~text
 main
-  -> tools
-    -> core
-      -> client
-        -> auth
+  -> config -> auth.Options
+  -> auth
+  -> client -> auth
+  -> tools -> core
 ~~~
 
 ### main
 
 cmd/opensvc-daemon-mcp/main.go is the composition root.
 
-cmd/opensvc-daemon-mcp/config.go owns environment-variable loading, defaults, parsing, and the process configuration type.
-
-cmd/opensvc-daemon-mcp/authenticator.go and http_client.go own executable-specific dependency construction. Keep environment parsing out of these files and keep transport/authentication implementation details out of main.go.
+Keep this package limited to main.go and its end-to-end main_test.go. Dependency factories and configuration parsing belong to their responsible internal packages.
 
 It is responsible for:
 
@@ -111,9 +109,15 @@ tools.RegisterIdentityTools(server, service)
 
 Only uncomment or add a domain when that domain actually exists.
 
+### config
+
+internal/config owns environment-variable loading, defaults, parsing, and the exported process Config type. It produces `auth.Options` but never reads secret-file contents.
+
 ### client
 
 internal/client is transport-only.
+
+Client.NewHTTPClient constructs the standard HTTP client, timeout, and optional development-only TLS verification bypass.
 
 Client.GetJSON is responsible for:
 
@@ -132,6 +136,8 @@ Do not add a generic MCP tool that exposes Client.GetJSON.
 ### auth
 
 internal/auth owns request authentication only.
+
+`auth.New` selects an Authenticator from `auth.Options`. Authentication-specific validation remains in the JWT and Basic constructors.
 
 The Authenticator interface applies credentials to an HTTP request. The JWT implementation:
 
