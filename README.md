@@ -16,7 +16,7 @@ The current implementation:
 - requires an OpenSVC Bearer access JWT on every MCP request;
 - validates JWT signatures and claims before invoking the MCP handler;
 - delegates the same request-scoped JWT to the daemon API;
-- exposes a small, typed, read-only tool surface documented by domain;
+- exposes a small, typed diagnostic tool surface with explicit safety annotations;
 - returns filtered, bounded structured responses;
 - supports a custom CA bundle for daemon server verification.
 
@@ -24,7 +24,8 @@ It is not production-ready.
 
 ## Tool documentation
 
-The MCP currently exposes these read-only tools.
+The MCP currently exposes mostly read-only tools plus one explicit,
+non-destructive instance status refresh.
 Detailed documentation is organized by OpenSVC daemon domain:
 
 - [Daemon domain](docs/tools/daemon.md)
@@ -32,6 +33,7 @@ Detailed documentation is organized by OpenSVC daemon domain:
 - [Object domain](docs/tools/object.md)
 - [Object status](docs/tools/object-status.md)
 - [Instance domain](docs/tools/instance.md)
+- [Instance status refresh](docs/tools/refresh-instance-status.md)
 - [Resource domain](docs/tools/resource.md)
 
 ## Requirements

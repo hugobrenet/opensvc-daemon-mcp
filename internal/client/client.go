@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,14 +38,33 @@ func New(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 }
 
 func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, output any) error {
+	return c.doJSON(ctx, http.MethodGet, path, query, nil, output)
+}
+
+func (c *Client) PostJSON(ctx context.Context, path string, query url.Values, input any, output any) error {
+	var body io.Reader
+	if input != nil {
+		payload, err := json.Marshal(input)
+		if err != nil {
+			return fmt.Errorf("encode OpenSVC daemon POST request body: %w", err)
+		}
+		body = bytes.NewReader(payload)
+	}
+	return c.doJSON(ctx, http.MethodPost, path, query, body, output)
+}
+
+func (c *Client) doJSON(ctx context.Context, method string, path string, query url.Values, body io.Reader, output any) error {
 	endpoint := c.baseURL.JoinPath(strings.TrimPrefix(path, "/"))
 	endpoint.RawQuery = query.Encode()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
-		return fmt.Errorf("create OpenSVC daemon GET request: %w", err)
+		return fmt.Errorf("create OpenSVC daemon %s request: %w", method, err)
 	}
 	request.Header.Set("Accept", "application/json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if err := auth.ApplyBearerFromContext(request); err != nil {
 		return fmt.Errorf("authenticate OpenSVC daemon request: %w", err)
 	}
@@ -59,6 +79,9 @@ func (c *Client) GetJSON(ctx context.Context, path string, query url.Values, out
 		return fmt.Errorf("OpenSVC daemon %s returned HTTP %s", path, response.Status)
 	}
 
+	if output == nil {
+		return nil
+	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, maxResponseBodySize))
 	if err := decoder.Decode(output); err != nil {
 		return fmt.Errorf("decode OpenSVC daemon %s response: %w", path, err)

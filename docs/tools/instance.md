@@ -18,6 +18,10 @@ aggregate object problem. It exposes availability, monitor state and targets,
 orchestration state, leadership, and resource status counts without returning
 full configuration or resource payloads.
 
+When `updated_at` is too old for the diagnosis, use
+`refresh_instance_status` on the exact path and node, then read this tool again
+or use the refreshed instance embedded in that tool's result.
+
 ## MCP properties
 
 The tool is read-only, non-destructive, closed-world, and has no side effects.

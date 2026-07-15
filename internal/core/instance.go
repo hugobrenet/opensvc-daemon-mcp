@@ -2,15 +2,20 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
 	defaultListObjectInstancesLimit = 50
 	maxListObjectInstancesLimit     = 100
+	defaultRefreshInstanceTimeout   = 30 * time.Second
+	minRefreshInstanceTimeout       = 5 * time.Second
+	maxRefreshInstanceTimeout       = 120 * time.Second
 )
 
 type ListObjectInstancesOptions struct {
@@ -55,6 +60,24 @@ type ResourceStatusSummary struct {
 	Warn          int `json:"warn" jsonschema:"number of resources with status warn"`
 	NotApplicable int `json:"not_applicable" jsonschema:"number of resources with status n/a"`
 	Other         int `json:"other" jsonschema:"number of resources with any other status"`
+}
+
+type RefreshInstanceStatusOptions struct {
+	Path    string
+	Node    string
+	Timeout time.Duration
+}
+
+type RefreshInstanceStatusResult struct {
+	Object            ClusterObjectReference `json:"object" jsonschema:"the canonical OpenSVC object reference"`
+	Node              string                 `json:"node" jsonschema:"the refreshed instance node name"`
+	SessionID         string                 `json:"session_id" jsonschema:"the OpenSVC session identifier returned when the status action was accepted"`
+	RefreshObserved   bool                   `json:"refresh_observed" jsonschema:"whether a newer instance status was observed before timeout"`
+	TimedOut          bool                   `json:"timed_out" jsonschema:"whether polling ended before a newer instance status was observed"`
+	PreviousUpdatedAt string                 `json:"previous_updated_at" jsonschema:"the instance status timestamp captured before the refresh action"`
+	CurrentUpdatedAt  string                 `json:"current_updated_at" jsonschema:"the latest instance status timestamp observed while polling"`
+	DurationMS        int64                  `json:"duration_ms" jsonschema:"elapsed milliseconds from action acceptance to the final observation"`
+	Instance          ObjectInstanceStatus   `json:"instance" jsonschema:"the latest instance status observed during the refresh workflow"`
 }
 
 type daemonInstanceList struct {
@@ -183,4 +206,121 @@ func summarizeResourceStatuses(resources map[string]daemonResourceStatusData) Re
 		}
 	}
 	return summary
+}
+
+func (s *Service) RefreshInstanceStatus(ctx context.Context, options RefreshInstanceStatusOptions) (RefreshInstanceStatusResult, error) {
+	reference, err := validateExactObjectPath(options.Path)
+	if err != nil {
+		return RefreshInstanceStatusResult{}, err
+	}
+	node := strings.TrimSpace(options.Node)
+	if node == "" {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("instance node is required")
+	}
+	if len(node) > 255 {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("instance node exceeds 255 characters")
+	}
+	timeout := options.Timeout
+	if timeout == 0 {
+		timeout = defaultRefreshInstanceTimeout
+	}
+	if timeout < minRefreshInstanceTimeout || timeout > maxRefreshInstanceTimeout {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("refresh timeout must be between %s and %s", minRefreshInstanceTimeout, maxRefreshInstanceTimeout)
+	}
+
+	previous, err := s.getExactObjectInstance(ctx, reference.Path, node)
+	if err != nil {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("get instance before status refresh: %w", err)
+	}
+	poster, ok := s.client.(JSONPoster)
+	if !ok {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("OpenSVC daemon client does not support POST requests")
+	}
+	var accepted struct {
+		SessionID string `json:"session_id"`
+	}
+	endpoint := fmt.Sprintf(
+		"/api/node/name/%s/instance/path/%s/%s/%s/action/status",
+		node,
+		reference.Namespace,
+		reference.Kind,
+		reference.Name,
+	)
+	if err := poster.PostJSON(ctx, endpoint, nil, nil, &accepted); err != nil {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("request instance status refresh: %w", err)
+	}
+	if accepted.SessionID == "" {
+		return RefreshInstanceStatusResult{}, fmt.Errorf("instance status refresh response has no session_id")
+	}
+
+	started := time.Now()
+	result := RefreshInstanceStatusResult{
+		Object:            reference,
+		Node:              node,
+		SessionID:         accepted.SessionID,
+		PreviousUpdatedAt: previous.UpdatedAt,
+		CurrentUpdatedAt:  previous.UpdatedAt,
+		Instance:          previous,
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for attempt := 0; ; attempt++ {
+		timer := time.NewTimer(refreshPollDelay(attempt))
+		select {
+		case <-pollCtx.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return RefreshInstanceStatusResult{}, ctx.Err()
+			}
+			result.TimedOut = true
+			result.DurationMS = time.Since(started).Milliseconds()
+			return result, nil
+		case <-timer.C:
+		}
+
+		current, err := s.getExactObjectInstance(pollCtx, reference.Path, node)
+		if err != nil {
+			if errors.Is(pollCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				result.TimedOut = true
+				result.DurationMS = time.Since(started).Milliseconds()
+				return result, nil
+			}
+			return RefreshInstanceStatusResult{}, fmt.Errorf("poll refreshed instance status: %w", err)
+		}
+		result.Instance = current
+		result.CurrentUpdatedAt = current.UpdatedAt
+		if current.UpdatedAt != "" && current.UpdatedAt != previous.UpdatedAt {
+			result.RefreshObserved = true
+			result.DurationMS = time.Since(started).Milliseconds()
+			return result, nil
+		}
+	}
+}
+
+func (s *Service) getExactObjectInstance(ctx context.Context, path string, node string) (ObjectInstanceStatus, error) {
+	instances, err := s.ListObjectInstances(ctx, ListObjectInstancesOptions{
+		Path:  path,
+		Node:  node,
+		Limit: maxListObjectInstancesLimit,
+	})
+	if err != nil {
+		return ObjectInstanceStatus{}, err
+	}
+	for _, instance := range instances.Instances {
+		if instance.Node == node {
+			return instance, nil
+		}
+	}
+	return ObjectInstanceStatus{}, fmt.Errorf("instance %q on node %q was not found or is not visible to the caller", path, node)
+}
+
+func refreshPollDelay(attempt int) time.Duration {
+	switch attempt {
+	case 0:
+		return 250 * time.Millisecond
+	case 1:
+		return 500 * time.Millisecond
+	default:
+		return time.Second
+	}
 }

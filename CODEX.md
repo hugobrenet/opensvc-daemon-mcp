@@ -10,13 +10,17 @@ The long-term goal is to support an AI operations agent that can inspect, diagno
 
 ## Current scope
 
-The current implementation exposes a limited read-only tool surface. Tool contracts, endpoints, examples, and domain-specific behavior are documented in:
+The current implementation exposes a limited diagnostic tool surface. Most
+tools are read-only; `refresh_instance_status` is an explicit, non-destructive
+active probe. Tool contracts, endpoints, examples, and domain-specific behavior
+are documented in:
 
 - [Daemon domain](docs/tools/daemon.md)
 - [Cluster domain](docs/tools/cluster.md)
 - [Object domain](docs/tools/object.md)
 - [Object status](docs/tools/object-status.md)
 - [Instance domain](docs/tools/instance.md)
+- [Instance status refresh](docs/tools/refresh-instance-status.md)
 - [Resource domain](docs/tools/resource.md)
 
 Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
@@ -47,6 +51,7 @@ docs/
     object.md
     object-status.md
     instance.md
+    refresh-instance-status.md
     resource.md
 
 internal/
@@ -233,11 +238,13 @@ protocol:
 - typed input and output structures so the SDK publishes both JSON Schemas;
 - standard `ToolAnnotations` that accurately describe its behavior.
 
-The current tools are read-only and contact only the configured OpenSVC daemon.
-Use `readOnlyClosedWorldAnnotations` to declare them as read-only,
-non-destructive, and closed-world. These annotations are hints for MCP clients,
-not security controls. Authentication, OpenSVC grants, input validation, and
-policy enforcement remain authoritative.
+Read-only tools contact only the configured OpenSVC daemon. Use
+`readOnlyClosedWorldAnnotations` to declare them as read-only, non-destructive,
+and closed-world. Active status probes use
+`activeNonDestructiveClosedWorldAnnotations`: they are not read-only,
+destructive, idempotent, or open-world. These annotations are hints for MCP
+clients, not security controls. Authentication, OpenSVC grants, input
+validation, and policy enforcement remain authoritative.
 
 Do not publish proprietary runtime tags or custom `_meta` fields without a
 concrete client interoperability requirement. The MCP SDK currently has no
@@ -359,7 +366,8 @@ Future authentication material must remain outside tool input and output. Langua
 
 The delegated JWT identifies the caller and lets the daemon enforce its OpenSVC grants. Until tool-specific policy and audit are designed:
 
-- keep tools read-only;
+- keep active operations limited to the explicit, non-destructive instance status refresh;
+- do not add lifecycle, configuration, provisioning, or other state-changing actions;
 - document live-daemon limitations;
 - return explicit HTTP errors;
 - do not work around a 401 or 403 by weakening security.
@@ -383,7 +391,7 @@ Avoid one-to-one exposure of every OpenAPI operation.
 
 Avoid arbitrary path, method, or body parameters in MCP tools.
 
-State-changing tools will require a separate design for caller identity, authorization, confirmation, audit, idempotency, orchestration tracking, and post-action verification.
+Lifecycle and configuration-changing tools will require a separate design for caller identity, authorization, confirmation, audit, idempotency, orchestration tracking, and post-action verification.
 
 ## Configuration
 
@@ -429,7 +437,7 @@ Before adding a Go module:
 - no MCP server-side TLS yet, so listening is restricted to loopback;
 - JWT creation and refresh remain the agent's responsibility;
 - no Unix socket transport;
-- a limited read-only tool set;
+- a limited, mostly read-only diagnostic tool set;
 - no tool-specific policy engine;
 - no audit subsystem;
 - no live OpenSVC integration test in the default test suite.

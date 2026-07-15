@@ -10,6 +10,10 @@ type JSONGetter interface {
 	GetJSON(context.Context, string, url.Values, any) error
 }
 
+type JSONPoster interface {
+	PostJSON(context.Context, string, url.Values, any, any) error
+}
+
 type Service struct {
 	client JSONGetter
 }

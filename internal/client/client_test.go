@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,47 @@ func TestGetJSON(t *testing.T) {
 	}
 	if output.Value != "ok" {
 		t.Errorf("got value %q, want ok", output.Value)
+	}
+}
+
+func TestPostJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("got method %q, want POST", request.Method)
+		}
+		if request.URL.Path != "/api/action/status" {
+			t.Errorf("got path %q, want /api/action/status", request.URL.Path)
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer delegated-token" {
+			t.Errorf("got Authorization header %q, want delegated Bearer token", got)
+		}
+		var input struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if input.Reason != "test" {
+			t.Errorf("got reason %q, want test", input.Reason)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(response, `{"session_id":"session-1"}`)
+	}))
+	defer server.Close()
+
+	apiClient, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("create API client: %v", err)
+	}
+	var output struct {
+		SessionID string `json:"session_id"`
+	}
+	ctx := auth.WithBearerToken(context.Background(), "delegated-token")
+	if err := apiClient.PostJSON(ctx, "/api/action/status", nil, map[string]string{"reason": "test"}, &output); err != nil {
+		t.Fatalf("POST JSON: %v", err)
+	}
+	if output.SessionID != "session-1" {
+		t.Errorf("got session id %q, want session-1", output.SessionID)
 	}
 }
 

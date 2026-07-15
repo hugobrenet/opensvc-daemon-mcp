@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"time"
 
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/core"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +17,36 @@ type ListObjectInstancesInput struct {
 
 type ListObjectInstancesOutput = core.ObjectInstanceList
 
+type RefreshInstanceStatusInput struct {
+	Path           string `json:"path" jsonschema:"the exact canonical OpenSVC object path returned by list_cluster_objects"`
+	Node           string `json:"node" jsonschema:"the exact node name hosting the instance to refresh"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"optional polling timeout in seconds between 5 and 120; defaults to 30"`
+}
+
+type RefreshInstanceStatusOutput = core.RefreshInstanceStatusResult
+
 func RegisterInstanceTools(server *mcp.Server, service *core.Service) {
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "refresh_instance_status",
+			Title:       "Refresh instance status",
+			Description: "Actively run an OpenSVC status probe for one exact object instance, then poll until a newer status is observed or the bounded timeout expires. Requires operator access on the namespace; it is non-destructive but executes resource drivers and updates daemon state.",
+			Annotations: activeNonDestructiveClosedWorldAnnotations(),
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input RefreshInstanceStatusInput) (*mcp.CallToolResult, RefreshInstanceStatusOutput, error) {
+			result, err := service.RefreshInstanceStatus(ctx, core.RefreshInstanceStatusOptions{
+				Path:    input.Path,
+				Node:    input.Node,
+				Timeout: time.Duration(input.TimeoutSeconds) * time.Second,
+			})
+			if err != nil {
+				return nil, RefreshInstanceStatusOutput{}, err
+			}
+			return nil, result, nil
+		},
+	)
+
 	mcp.AddTool(
 		server,
 		&mcp.Tool{

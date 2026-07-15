@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 		"token_use": "access",
 	})
 
+	var instanceRefreshed atomic.Bool
 	daemonServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
@@ -71,10 +73,23 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 			}
 			fmt.Fprint(response, `{"kind":"ObjectList","items":[{"kind":"ObjectItem","meta":{"object":"prod/svc/app"},"data":{"avail":"up","overall":"up","provisioned":"true","frozen":"unfrozen","placement_state":"optimal","placement_policy":"nodes order","orchestrate":"ha","topology":"failover","priority":50,"scope":["node-a"],"updated_at":"2026-07-15T10:00:00Z","up_instances_count":1,"instances":{"node-a":{}}}}]}`)
 		case "/api/instance":
+			if request.Method != http.MethodGet {
+				t.Errorf("got instance method %q, want GET", request.Method)
+			}
 			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
 				t.Errorf("got instance object path %q, want prod/svc/app", got)
 			}
-			fmt.Fprint(response, `{"kind":"InstanceList","items":[{"kind":"InstanceItem","meta":{"node":"node-a","object":"prod/svc/app"},"data":{"monitor":{"state":"idle","global_expect":"started","local_expect":"none","is_ha_leader":true,"orchestration_is_done":true},"status":{"avail":"up","overall":"up","provisioned":"true","resources":{"app#1":{"status":"up"}}}}}]}`)
+			updatedAt := "2026-07-15T10:00:00Z"
+			if instanceRefreshed.Load() {
+				updatedAt = "2026-07-15T10:00:01Z"
+			}
+			fmt.Fprintf(response, `{"kind":"InstanceList","items":[{"kind":"InstanceItem","meta":{"node":"node-a","object":"prod/svc/app"},"data":{"monitor":{"state":"idle","global_expect":"started","local_expect":"none","is_ha_leader":true,"orchestration_is_done":true},"status":{"avail":"up","overall":"up","provisioned":"true","updated_at":%q,"resources":{"app#1":{"status":"up"}}}}}]}`, updatedAt)
+		case "/api/node/name/node-a/instance/path/prod/svc/app/action/status":
+			if request.Method != http.MethodPost {
+				t.Errorf("got refresh method %q, want POST", request.Method)
+			}
+			instanceRefreshed.Store(true)
+			fmt.Fprint(response, `{"session_id":"session-1"}`)
 		case "/api/resource":
 			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
 				t.Errorf("got resource object path %q, want prod/svc/app", got)
@@ -150,12 +165,13 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 		t.Fatalf("list MCP tools: %v", err)
 	}
 	expectedToolTitles := map[string]string{
-		"get_daemon_identity":   "Get daemon identity",
-		"get_cluster_health":    "Assess cluster health",
-		"get_object_status":     "Get object status",
-		"list_cluster_objects":  "List cluster objects",
-		"list_object_instances": "List object instances",
-		"list_object_resources": "List object resources",
+		"get_daemon_identity":     "Get daemon identity",
+		"get_cluster_health":      "Assess cluster health",
+		"get_object_status":       "Get object status",
+		"list_cluster_objects":    "List cluster objects",
+		"list_object_instances":   "List object instances",
+		"list_object_resources":   "List object resources",
+		"refresh_instance_status": "Refresh instance status",
 	}
 	toolNames := make(map[string]bool, len(availableTools.Tools))
 	for _, tool := range availableTools.Tools {
@@ -170,7 +186,16 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 			t.Errorf("tool %q has no output schema", tool.Name)
 		}
 		assertSchemaPropertyDescriptions(t, tool.OutputSchema, "outputSchema")
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+		if tool.Annotations == nil {
+			t.Errorf("tool %q has no annotations", tool.Name)
+		} else if tool.Name == "refresh_instance_status" {
+			if tool.Annotations.ReadOnlyHint {
+				t.Errorf("tool %q is incorrectly annotated as read-only", tool.Name)
+			}
+			if tool.Annotations.IdempotentHint {
+				t.Errorf("tool %q is incorrectly annotated as idempotent", tool.Name)
+			}
+		} else if !tool.Annotations.ReadOnlyHint {
 			t.Errorf("tool %q is not annotated as read-only", tool.Name)
 		}
 		if tool.Annotations != nil {
@@ -288,6 +313,24 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 	if instances.Count != 1 || instances.Instances[0].Node != "node-a" {
 		t.Errorf("got unexpected object instances %#v", instances)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "refresh_instance_status",
+		Arguments: mcptools.RefreshInstanceStatusInput{
+			Path: "prod/svc/app", Node: "node-a", TimeoutSeconds: 5,
+		},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call refresh_instance_status: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var refreshed mcptools.RefreshInstanceStatusOutput
+	if err := json.Unmarshal(data, &refreshed); err != nil {
+		t.Fatalf("decode refreshed instance status: %v", err)
+	}
+	if !refreshed.RefreshObserved || refreshed.TimedOut || refreshed.SessionID != "session-1" || refreshed.CurrentUpdatedAt != "2026-07-15T10:00:01Z" {
+		t.Errorf("got unexpected refresh result %#v", refreshed)
 	}
 
 	result, err = session.CallTool(ctx, &mcp.CallToolParams{
