@@ -15,7 +15,30 @@ type ListClusterObjectsInput struct {
 
 type ListClusterObjectsOutput = core.ClusterObjectList
 
+type GetObjectStatusInput struct {
+	Path string `json:"path" jsonschema:"the exact canonical OpenSVC object path returned by list_cluster_objects"`
+}
+
+type GetObjectStatusOutput = core.ObjectStatus
+
 func RegisterObjectTools(server *mcp.Server, service *core.Service) {
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "get_object_status",
+			Title:       "Get object status",
+			Description: "Inspect the last-known aggregate operational status and instance placement of one exact OpenSVC object. This read-only call does not refresh instance drivers; use updated_at to assess freshness before drilling into instance or resource details.",
+			Annotations: readOnlyClosedWorldAnnotations(),
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input GetObjectStatusInput) (*mcp.CallToolResult, GetObjectStatusOutput, error) {
+			status, err := service.GetObjectStatus(ctx, input.Path)
+			if err != nil {
+				return nil, GetObjectStatusOutput{}, err
+			}
+			return nil, status, nil
+		},
+	)
+
 	mcp.AddTool(
 		server,
 		&mcp.Tool{

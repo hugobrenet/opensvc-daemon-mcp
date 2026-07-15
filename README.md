@@ -30,6 +30,9 @@ Detailed documentation is organized by OpenSVC daemon domain:
 - [Daemon domain](docs/tools/daemon.md)
 - [Cluster domain](docs/tools/cluster.md)
 - [Object domain](docs/tools/object.md)
+- [Object status](docs/tools/object-status.md)
+- [Instance domain](docs/tools/instance.md)
+- [Resource domain](docs/tools/resource.md)
 
 ## Requirements
 
@@ -164,6 +167,7 @@ The test suite covers:
 - Do not expose credentials or raw secrets to MCP clients or language models.
 - Add authentication and policy enforcement before state-changing tools.
 - Verify OpenSVC operations after execution instead of assuming request acceptance means completion.
+- Treat status returned by read-only GET tools as the daemon's last-known state; these tools do not implicitly run resource-driver probes.
 
 ## Roadmap
 

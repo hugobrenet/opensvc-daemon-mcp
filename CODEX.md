@@ -15,6 +15,9 @@ The current implementation exposes a limited read-only tool surface. Tool contra
 - [Daemon domain](docs/tools/daemon.md)
 - [Cluster domain](docs/tools/cluster.md)
 - [Object domain](docs/tools/object.md)
+- [Object status](docs/tools/object-status.md)
+- [Instance domain](docs/tools/instance.md)
+- [Resource domain](docs/tools/resource.md)
 
 Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
@@ -42,6 +45,9 @@ docs/
     daemon.md
     cluster.md
     object.md
+    object-status.md
+    instance.md
+    resource.md
 
 internal/
   auth/
@@ -66,11 +72,19 @@ internal/
     cluster_test.go
     object.go
     object_test.go
+    object_status.go
+    object_status_test.go
+    instance.go
+    instance_test.go
+    resource.go
+    resource_test.go
   tools/
     annotations.go
     daemon.go
     cluster.go
     object.go
+    instance.go
+    resource.go
 ~~~
 
 Do not reintroduce an internal/mcpserver package. The MCP server is intentionally created in main.go, similarly to the existing Python Collector MCP server entrypoint.
@@ -111,6 +125,8 @@ The expected registration style is:
 tools.RegisterDaemonTools(server, service)
 tools.RegisterClusterTools(server, service)
 tools.RegisterObjectTools(server, service)
+tools.RegisterInstanceTools(server, service)
+tools.RegisterResourceTools(server, service)
 // tools.RegisterNodeTools(server, service)
 ~~~
 
@@ -194,6 +210,8 @@ Each domain file exposes one registration function using Go exported naming:
 func RegisterDaemonTools(server *mcp.Server, service *core.Service)
 func RegisterClusterTools(server *mcp.Server, service *core.Service)
 func RegisterObjectTools(server *mcp.Server, service *core.Service)
+func RegisterInstanceTools(server *mcp.Server, service *core.Service)
+func RegisterResourceTools(server *mcp.Server, service *core.Service)
 ~~~
 
 Tool handlers should remain thin:
@@ -252,6 +270,7 @@ Each tool document must cover:
 - MCP title, side-effect annotations, and their non-authoritative nature;
 - delegated JWT authorization and visibility boundaries;
 - exact OpenSVC endpoint and data freshness semantics;
+- whether the endpoint reads last-known daemon state or actively refreshes drivers;
 - input fields, defaults, validation, pagination, and selector behavior;
 - every output field and any derived semantics;
 - representative JSON requests or responses;

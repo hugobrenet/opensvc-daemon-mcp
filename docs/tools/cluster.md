@@ -46,8 +46,21 @@ GET /api/cluster/status?selector=**
 ```
 
 The daemon serves cluster status from data cached for up to approximately two
-seconds. The result describes one observed state and can change immediately
-after the call.
+seconds. This cache refresh only rebuilds the cluster view from the status
+currently held in daemon memory. It does not execute resource-driver status
+probes.
+
+Instance and resource states are therefore last-known OpenSVC states. They are
+updated by explicit status actions, scheduled status jobs, and other daemon
+events. An out-of-band change such as `docker stop` can remain invisible until
+the next status refresh. The inverse is also possible: a recovered resource can
+remain reported down until refresh.
+
+Consequently, `healthy=true` means that no problem exists in the visible status
+currently published by OpenSVC. It is not proof that every resource was probed
+at call time. This tool intentionally performs no implicit refresh because a
+cluster-wide refresh executes drivers, can be expensive, and can require
+stronger grants.
 
 ## Authorization and visibility
 
@@ -143,6 +156,10 @@ Problem objects are sorted by path. At most 100 are returned;
 | `object_summary` | Availability and problem counts for visible actor objects |
 | `problem_objects` | Sorted details for up to 100 problematic actor objects |
 | `problem_objects_truncated` | Whether more problematic objects were omitted |
+
+`get_cluster_health` does not currently expose per-object status timestamps.
+Use `get_object_status` and `list_object_instances` to inspect `updated_at` when
+freshness matters for a diagnosis.
 
 All issue strings are deterministic descriptions intended for diagnosis. They
 are part of the current experimental contract and may be refined before the

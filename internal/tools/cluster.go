@@ -17,8 +17,8 @@ func RegisterClusterTools(server *mcp.Server, service *core.Service) {
 		&mcp.Tool{
 			Name:  "get_cluster_health",
 			Title: "Assess cluster health",
-			Description: "Compute a point-in-time, deterministic health assessment from OpenSVC cluster status for the cluster, nodes, and visible actor objects. " +
-				"Use it to identify operational anomalies; this is an MCP-derived assessment and makes no changes.",
+			Description: "Compute a deterministic health assessment from the last-known OpenSVC cluster status for the cluster, nodes, and visible actor objects. " +
+				"This read-only call does not refresh instance drivers; healthy means no problem in the status currently published by the daemon, not a real-time probe.",
 			Annotations: readOnlyClosedWorldAnnotations(),
 		},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ GetClusterHealthInput) (*mcp.CallToolResult, GetClusterHealthOutput, error) {

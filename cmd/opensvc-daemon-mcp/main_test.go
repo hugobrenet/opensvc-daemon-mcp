@@ -65,6 +65,21 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 				t.Errorf("got object selector %q, want **", got)
 			}
 			fmt.Fprint(response, `["prod/svc/app", "cluster"]`)
+		case "/api/object":
+			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
+				t.Errorf("got object path %q, want prod/svc/app", got)
+			}
+			fmt.Fprint(response, `{"kind":"ObjectList","items":[{"kind":"ObjectItem","meta":{"object":"prod/svc/app"},"data":{"avail":"up","overall":"up","provisioned":"true","frozen":"unfrozen","placement_state":"optimal","placement_policy":"nodes order","orchestrate":"ha","topology":"failover","priority":50,"scope":["node-a"],"updated_at":"2026-07-15T10:00:00Z","up_instances_count":1,"instances":{"node-a":{}}}}]}`)
+		case "/api/instance":
+			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
+				t.Errorf("got instance object path %q, want prod/svc/app", got)
+			}
+			fmt.Fprint(response, `{"kind":"InstanceList","items":[{"kind":"InstanceItem","meta":{"node":"node-a","object":"prod/svc/app"},"data":{"monitor":{"state":"idle","global_expect":"started","local_expect":"none","is_ha_leader":true,"orchestration_is_done":true},"status":{"avail":"up","overall":"up","provisioned":"true","resources":{"app#1":{"status":"up"}}}}}]}`)
+		case "/api/resource":
+			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
+				t.Errorf("got resource object path %q, want prod/svc/app", got)
+			}
+			fmt.Fprint(response, `{"kind":"ResourceList","items":[{"kind":"ResourceItem","meta":{"node":"node-a","object":"prod/svc/app","rid":"app#1"},"data":{"config":{"is_disabled":false,"is_monitored":true,"is_standby":false},"status":{"type":"app.forking","label":"application","status":"up","monitor":true,"provisioned":{"state":"true"},"tags":[],"log":[]}}}]}`)
 		default:
 			t.Errorf("got unexpected daemon path %q", request.URL.Path)
 			http.NotFound(response, request)
@@ -135,9 +150,12 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 		t.Fatalf("list MCP tools: %v", err)
 	}
 	expectedToolTitles := map[string]string{
-		"get_daemon_identity":  "Get daemon identity",
-		"get_cluster_health":   "Assess cluster health",
-		"list_cluster_objects": "List cluster objects",
+		"get_daemon_identity":   "Get daemon identity",
+		"get_cluster_health":    "Assess cluster health",
+		"get_object_status":     "Get object status",
+		"list_cluster_objects":  "List cluster objects",
+		"list_object_instances": "List object instances",
+		"list_object_resources": "List object resources",
 	}
 	toolNames := make(map[string]bool, len(availableTools.Tools))
 	for _, tool := range availableTools.Tools {
@@ -151,9 +169,7 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 		if tool.OutputSchema == nil {
 			t.Errorf("tool %q has no output schema", tool.Name)
 		}
-		if tool.Name == "get_cluster_health" {
-			assertSchemaPropertyDescriptions(t, tool.OutputSchema, "outputSchema")
-		}
+		assertSchemaPropertyDescriptions(t, tool.OutputSchema, "outputSchema")
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
 			t.Errorf("tool %q is not annotated as read-only", tool.Name)
 		}
@@ -166,8 +182,13 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 			}
 		}
 	}
-	if len(toolNames) != 3 || !toolNames["get_daemon_identity"] || !toolNames["get_cluster_health"] || !toolNames["list_cluster_objects"] {
-		t.Fatalf("got tools %#v, want get_daemon_identity, get_cluster_health, and list_cluster_objects", availableTools.Tools)
+	if len(toolNames) != len(expectedToolTitles) {
+		t.Fatalf("got tools %#v, want exactly %#v", availableTools.Tools, expectedToolTitles)
+	}
+	for name := range expectedToolTitles {
+		if !toolNames[name] {
+			t.Errorf("tool %q is not registered", name)
+		}
 	}
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
@@ -235,6 +256,54 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 	if objects.Total != 2 || objects.Count != 2 || objects.Objects[0].Path != "cluster" || objects.Objects[1].Path != "prod/svc/app" {
 		t.Errorf("got unexpected cluster object list %#v", objects)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_object_status",
+		Arguments: mcptools.GetObjectStatusInput{Path: "prod/svc/app"},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call get_object_status: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var objectStatus mcptools.GetObjectStatusOutput
+	if err := json.Unmarshal(data, &objectStatus); err != nil {
+		t.Fatalf("decode object status: %v", err)
+	}
+	if objectStatus.Availability != "up" || objectStatus.InstanceCount != 1 {
+		t.Errorf("got unexpected object status %#v", objectStatus)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "list_object_instances",
+		Arguments: mcptools.ListObjectInstancesInput{Path: "prod/svc/app"},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call list_object_instances: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var instances mcptools.ListObjectInstancesOutput
+	if err := json.Unmarshal(data, &instances); err != nil {
+		t.Fatalf("decode object instances: %v", err)
+	}
+	if instances.Count != 1 || instances.Instances[0].Node != "node-a" {
+		t.Errorf("got unexpected object instances %#v", instances)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "list_object_resources",
+		Arguments: mcptools.ListObjectResourcesInput{Path: "prod/svc/app"},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call list_object_resources: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var resources mcptools.ListObjectResourcesOutput
+	if err := json.Unmarshal(data, &resources); err != nil {
+		t.Fatalf("decode object resources: %v", err)
+	}
+	if resources.Count != 1 || resources.Resources[0].RID != "app#1" {
+		t.Errorf("got unexpected object resources %#v", resources)
 	}
 }
 
