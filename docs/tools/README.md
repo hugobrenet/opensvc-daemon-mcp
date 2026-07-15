@@ -11,7 +11,7 @@ combine the tools during operations.
 |---|---|---|
 | Daemon | `get_daemon_identity` | [Daemon tools](daemon.md) |
 | Cluster | `get_cluster_health` | [Cluster tools](cluster.md) |
-| Objects | `list_cluster_objects`, `get_object_status` | [Object tools](objects.md) |
+| Objects | `list_cluster_objects`, `get_object_status`, `get_object_config` | [Object tools](objects.md) |
 | Instances | `list_object_instances`, `refresh_instance_status` | [Instance tools](instances.md) |
 | Resources | `list_object_resources` | [Resource tools](resources.md) |
 
@@ -24,6 +24,7 @@ get_daemon_identity
   -> get_cluster_health
   -> list_cluster_objects
   -> get_object_status
+  -> get_object_config when declared settings matter
   -> list_object_instances
   -> refresh_instance_status when freshness is insufficient
   -> list_object_resources
@@ -82,6 +83,7 @@ are representative and will differ between calls.
 | `get_cluster_health` | Yes | No | `guest` or higher |
 | `list_cluster_objects` | Yes | No | Visible namespaces |
 | `get_object_status` | Yes | No | Visibility on the object namespace |
+| `get_object_config` | Yes | No | Visibility on the object namespace |
 | `list_object_instances` | Yes | No | Visibility on the object namespace |
 | `refresh_instance_status` | No | No | `operator`, `admin`, or `root` |
 | `list_object_resources` | Yes | No | Visibility on the object namespace |

@@ -21,7 +21,36 @@ type GetObjectStatusInput struct {
 
 type GetObjectStatusOutput = core.ObjectStatus
 
+type GetObjectConfigInput struct {
+	Path     string   `json:"path" jsonschema:"the exact canonical OpenSVC object path returned by list_cluster_objects"`
+	Keywords []string `json:"keywords,omitempty" jsonschema:"optional exact configuration keywords; at most 50; omit to read the bounded complete configuration"`
+	Limit    int      `json:"limit,omitempty" jsonschema:"optional maximum keyword records between 1 and 200; defaults to 100"`
+}
+
+type GetObjectConfigOutput = core.ObjectConfig
+
 func RegisterObjectTools(server *mcp.Server, service *core.Service) {
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "get_object_config",
+			Title:       "Get object configuration",
+			Description: "Read bounded raw, non-evaluated configuration keywords for one exact OpenSVC object. Values may contain sensitive operational data; request exact keywords when possible. This tool never dereferences references, impersonates a node, or returns the raw configuration file.",
+			Annotations: readOnlyClosedWorldAnnotations(),
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input GetObjectConfigInput) (*mcp.CallToolResult, GetObjectConfigOutput, error) {
+			config, err := service.GetObjectConfig(ctx, core.GetObjectConfigOptions{
+				Path:     input.Path,
+				Keywords: input.Keywords,
+				Limit:    input.Limit,
+			})
+			if err != nil {
+				return nil, GetObjectConfigOutput{}, err
+			}
+			return nil, config, nil
+		},
+	)
+
 	mcp.AddTool(
 		server,
 		&mcp.Tool{

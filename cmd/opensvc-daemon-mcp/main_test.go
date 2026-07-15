@@ -72,6 +72,18 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 				t.Errorf("got object path %q, want prod/svc/app", got)
 			}
 			fmt.Fprint(response, `{"kind":"ObjectList","items":[{"kind":"ObjectItem","meta":{"object":"prod/svc/app"},"data":{"avail":"up","overall":"up","provisioned":"true","frozen":"unfrozen","placement_state":"optimal","placement_policy":"nodes order","orchestrate":"ha","topology":"failover","priority":50,"scope":["node-a"],"updated_at":"2026-07-15T10:00:00Z","up_instances_count":1,"instances":{"node-a":{}}}}]}`)
+		case "/api/object/path/prod/svc/app/config":
+			if got := request.URL.Query().Get("evaluate"); got != "false" {
+				t.Errorf("got config evaluate %q, want false", got)
+			}
+			keywords := request.URL.Query()["kw"]
+			if len(keywords) != 2 || keywords[0] != "app#main.command" || keywords[1] != "app#main.type" {
+				t.Errorf("got config keywords %#v", keywords)
+			}
+			if request.URL.Query().Has("impersonate") {
+				t.Error("config request unexpectedly impersonates a node")
+			}
+			fmt.Fprint(response, `{"kind":"KeywordList","items":[{"object":"prod/svc/app","node":"","keyword":"app#main.type","value":"forking","evaluated_as":""},{"object":"prod/svc/app","node":"","keyword":"app#main.command","value":"/opt/app/start","evaluated_as":""}]}`)
 		case "/api/instance":
 			if request.Method != http.MethodGet {
 				t.Errorf("got instance method %q, want GET", request.Method)
@@ -167,6 +179,7 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	expectedToolTitles := map[string]string{
 		"get_daemon_identity":     "Get daemon identity",
 		"get_cluster_health":      "Assess cluster health",
+		"get_object_config":       "Get object configuration",
 		"get_object_status":       "Get object status",
 		"list_cluster_objects":    "List cluster objects",
 		"list_object_instances":   "List object instances",
@@ -297,6 +310,31 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 	if objectStatus.Availability != "up" || objectStatus.InstanceCount != 1 {
 		t.Errorf("got unexpected object status %#v", objectStatus)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_object_config",
+		Arguments: mcptools.GetObjectConfigInput{
+			Path: "prod/svc/app",
+			Keywords: []string{
+				"app#main.type",
+				"app#main.command",
+			},
+		},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call get_object_config: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var objectConfig mcptools.GetObjectConfigOutput
+	if err := json.Unmarshal(data, &objectConfig); err != nil {
+		t.Fatalf("decode object config: %v", err)
+	}
+	if objectConfig.Total != 2 || objectConfig.Count != 2 || objectConfig.Truncated || objectConfig.ValuesTruncated != 0 {
+		t.Errorf("got unexpected object config metadata %#v", objectConfig)
+	}
+	if objectConfig.Items[0].Keyword != "app#main.command" || objectConfig.Items[0].Value != "/opt/app/start" || objectConfig.Items[1].Keyword != "app#main.type" {
+		t.Errorf("got unexpected object config items %#v", objectConfig.Items)
 	}
 
 	result, err = session.CallTool(ctx, &mcp.CallToolParams{

@@ -75,6 +75,8 @@ internal/
     cluster_test.go
     object.go
     object_test.go
+    object_config.go
+    object_config_test.go
     object_status.go
     object_status_test.go
     instance.go

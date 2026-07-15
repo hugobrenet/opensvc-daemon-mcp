@@ -3,6 +3,7 @@ domain: object
 tools:
   - list_cluster_objects
   - get_object_status
+  - get_object_config
 stability: experimental
 ---
 
@@ -13,7 +14,8 @@ aggregate status.
 
 Implementation:
 
-- business logic: `internal/core/object.go` and `internal/core/object_status.go`;
+- business logic: `internal/core/object.go`, `internal/core/object_status.go`,
+  and `internal/core/object_config.go`;
 - MCP definitions: `internal/tools/object.go`.
 
 ## Tool selection
@@ -21,7 +23,8 @@ Implementation:
 Use `list_cluster_objects` to discover canonical paths visible to the caller.
 Use `get_object_status` after selecting one exact path. Continue with
 `list_object_instances` when an aggregate object state requires node-level
-diagnosis.
+diagnosis. Use `get_object_config` when the diagnosis requires declared driver,
+resource, placement, or orchestration settings.
 
 ## Tools
 
@@ -175,14 +178,111 @@ Wildcard paths are intentionally unsupported.
 `is_actor` distinguishes svc and vol actors from support objects that do not
 publish availability. Scope and instance node names are sorted.
 
+### `get_object_config`
+
+Returns sorted raw, non-evaluated configuration keyword records for one exact
+object. Use it to compare declared settings with the operational state reported
+by object, instance, and resource tools.
+
+Configuration values can contain sensitive operational data. Request exact
+keywords whenever the diagnosis does not require the complete configuration.
+
+#### OpenSVC API and safety
+
+```text
+GET /api/object/path/<namespace>/<kind>/<name>/config?evaluate=false[&kw=<keyword>...]
+```
+
+The MCP always sends `evaluate=false`. It never dereferences references,
+converts evaluated values, impersonates a node, or returns the raw INI file.
+If the daemon unexpectedly returns evaluated data, the tool fails instead of
+exposing it.
+
+OpenSVC remains authoritative for namespace visibility. The lab daemon permits
+this read with `guest` access on the object namespace.
+
+#### MCP properties
+
+This tool is read-only, non-destructive, closed-world, and has no side effects.
+
+#### Input
+
+| Field | Required | Default | Bounds | Meaning |
+|---|---:|---:|---:|---|
+| `path` | Yes | — | 512 characters | Exact canonical object path |
+| `keywords` | No | All matching | At most 50, each at most 255 characters | Exact configuration keywords sent as repeated `kw` parameters |
+| `limit` | No | 100 | 1..200 | Maximum keyword records returned by the MCP |
+
+`limit=0` is the omitted Go zero value and selects the default 100; it never
+means unlimited. The daemon endpoint itself has no `limit` parameter.
+
+Lab input example:
+
+```json
+{
+  "path": "lab/svc/redis",
+  "keywords": [
+    "container#redis.image",
+    "container#redis.image_pull_policy"
+  ],
+  "limit": 100
+}
+```
+
+#### Lab output example
+
+```json
+{
+  "object": {
+    "kind": "svc",
+    "name": "redis",
+    "namespace": "lab",
+    "path": "lab/svc/redis"
+  },
+  "keyword_filter": [
+    "container#redis.image",
+    "container#redis.image_pull_policy"
+  ],
+  "total": 2,
+  "count": 2,
+  "items": [
+    {
+      "keyword": "container#redis.image",
+      "value": "redis:7-alpine",
+      "node": "",
+      "value_truncated": false
+    },
+    {
+      "keyword": "container#redis.image_pull_policy",
+      "value": "once",
+      "node": "",
+      "value_truncated": false
+    }
+  ],
+  "truncated": false,
+  "values_truncated": 0
+}
+```
+
+Records are sorted by keyword and node. Each value is limited to 4096 Unicode
+characters, and all returned values share a 64-KiB character budget.
+`value_truncated` identifies an individual shortened value;
+`values_truncated` provides the aggregate count.
+
+`truncated=true` means additional keyword records were omitted by `limit`.
+Because the daemon endpoint has no pagination contract, request the required
+omitted values explicitly through `keywords` rather than requesting an
+unbounded response.
+
 ## Errors
 
 | Condition | Result |
 |---|---|
 | Invalid MCP JWT | MCP HTTP `401` |
 | Invisible or unauthorized object | Tool error from the daemon; commonly HTTP `403` or an empty selection |
-| Invalid selector, path, limit, or cursor | Tool validation or daemon error |
+| Invalid selector, path, limit, cursor, or keyword filter | Tool validation or daemon error |
 | Missing object or unexpected selection | Tool error; no partial result |
+| Evaluated configuration returned unexpectedly | Tool error; values are not exposed |
 | Malformed daemon path or response | Tool error with parsing context |
 
 Errors preserve bounded OpenSVC RFC 7807 details and never include the JWT.
