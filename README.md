@@ -24,7 +24,8 @@ It is not production-ready.
 
 ## Tool documentation
 
-Tool documentation is organized by OpenSVC daemon domain:
+The MCP currently exposes these read-only tools.
+Detailed documentation is organized by OpenSVC daemon domain:
 
 - [Daemon domain](docs/tools/daemon.md)
 - [Cluster domain](docs/tools/cluster.md)

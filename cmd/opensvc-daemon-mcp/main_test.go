@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,9 +134,37 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list MCP tools: %v", err)
 	}
+	expectedToolTitles := map[string]string{
+		"get_daemon_identity":  "Get daemon identity",
+		"get_cluster_health":   "Assess cluster health",
+		"list_cluster_objects": "List cluster objects",
+	}
 	toolNames := make(map[string]bool, len(availableTools.Tools))
 	for _, tool := range availableTools.Tools {
 		toolNames[tool.Name] = true
+		if tool.Title != expectedToolTitles[tool.Name] {
+			t.Errorf("tool %q has title %q, want %q", tool.Name, tool.Title, expectedToolTitles[tool.Name])
+		}
+		if tool.Description == "" {
+			t.Errorf("tool %q has no description", tool.Name)
+		}
+		if tool.OutputSchema == nil {
+			t.Errorf("tool %q has no output schema", tool.Name)
+		}
+		if tool.Name == "get_cluster_health" {
+			assertSchemaPropertyDescriptions(t, tool.OutputSchema, "outputSchema")
+		}
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Errorf("tool %q is not annotated as read-only", tool.Name)
+		}
+		if tool.Annotations != nil {
+			if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+				t.Errorf("tool %q is not explicitly annotated as non-destructive", tool.Name)
+			}
+			if tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
+				t.Errorf("tool %q is not explicitly annotated as closed-world", tool.Name)
+			}
+		}
 	}
 	if len(toolNames) != 3 || !toolNames["get_daemon_identity"] || !toolNames["get_cluster_health"] || !toolNames["list_cluster_objects"] {
 		t.Fatalf("got tools %#v, want get_daemon_identity, get_cluster_health, and list_cluster_objects", availableTools.Tools)
@@ -206,6 +235,40 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 	if objects.Total != 2 || objects.Count != 2 || objects.Objects[0].Path != "cluster" || objects.Objects[1].Path != "prod/svc/app" {
 		t.Errorf("got unexpected cluster object list %#v", objects)
+	}
+}
+
+func assertSchemaPropertyDescriptions(t *testing.T, schema any, path string) {
+	t.Helper()
+	schemaObject, ok := schema.(map[string]any)
+	if !ok {
+		t.Errorf("%s has type %T, want a JSON object", path, schema)
+		return
+	}
+
+	if propertiesValue, exists := schemaObject["properties"]; exists {
+		properties, ok := propertiesValue.(map[string]any)
+		if !ok {
+			t.Errorf("%s.properties has type %T, want a JSON object", path, propertiesValue)
+			return
+		}
+		for name, propertyValue := range properties {
+			property, ok := propertyValue.(map[string]any)
+			propertyPath := path + ".properties." + name
+			if !ok {
+				t.Errorf("%s has type %T, want a JSON object", propertyPath, propertyValue)
+				continue
+			}
+			description, _ := property["description"].(string)
+			if strings.TrimSpace(description) == "" {
+				t.Errorf("%s has no description", propertyPath)
+			}
+			assertSchemaPropertyDescriptions(t, property, propertyPath)
+		}
+	}
+
+	if items, exists := schemaObject["items"]; exists {
+		assertSchemaPropertyDescriptions(t, items, path+".items")
 	}
 }
 

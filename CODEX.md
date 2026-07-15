@@ -67,6 +67,7 @@ internal/
     object.go
     object_test.go
   tools/
+    annotations.go
     daemon.go
     cluster.go
     object.go
@@ -203,6 +204,63 @@ Tool handlers should remain thin:
 4. propagate useful errors.
 
 Do not place HTTP paths, authentication logic, or response parsing in a tool handler.
+
+Every tool declaration must expose a concise runtime contract through the MCP
+protocol:
+
+- a stable snake_case `Name` built from an explicit verb and domain noun;
+- a short human-readable `Title`;
+- a precise `Description` stating what the tool returns, when to use it, and
+  an important limitation when applicable;
+- typed input and output structures so the SDK publishes both JSON Schemas;
+- standard `ToolAnnotations` that accurately describe its behavior.
+
+The current tools are read-only and contact only the configured OpenSVC daemon.
+Use `readOnlyClosedWorldAnnotations` to declare them as read-only,
+non-destructive, and closed-world. These annotations are hints for MCP clients,
+not security controls. Authentication, OpenSVC grants, input validation, and
+policy enforcement remain authoritative.
+
+Do not publish proprietary runtime tags or custom `_meta` fields without a
+concrete client interoperability requirement. The MCP SDK currently has no
+standard tool-tags field. Documentation tags belong in the front matter of the
+matching file under `docs/tools/`.
+
+### tool documentation
+
+Runtime MCP metadata is deliberately concise. The matching
+`docs/tools/<domain>.md` file is the durable human and agent-facing contract.
+Each tool document must begin with this front matter:
+
+~~~yaml
+---
+tool: tool_name
+domain: domain_name
+category: discovery
+stability: experimental
+read_only: true
+---
+~~~
+
+Choose `category` to describe the operational purpose and update `stability`
+when the contract matures. Do not use documentation tags as authorization or
+runtime policy.
+
+Each tool document must cover:
+
+- when to use the tool and when not to use it;
+- MCP title, side-effect annotations, and their non-authoritative nature;
+- delegated JWT authorization and visibility boundaries;
+- exact OpenSVC endpoint and data freshness semantics;
+- input fields, defaults, validation, pagination, and selector behavior;
+- every output field and any derived semantics;
+- representative JSON requests or responses;
+- expected authentication, authorization, transport, and data errors;
+- the OpenSVC version against which behavior was verified.
+
+Keep declarations, implementation, tests, and documentation synchronized in
+the same change. The end-to-end `tools/list` test must assert the title,
+description, output schema, and safety annotations of every registered tool.
 
 ## Type placement
 

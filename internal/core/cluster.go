@@ -30,45 +30,45 @@ type ClusterHealthStatus struct {
 }
 
 type ClusterNodeHealthSummary struct {
-	Total      int `json:"total"`
-	Healthy    int `json:"healthy"`
-	Missing    int `json:"missing"`
-	Frozen     int `json:"frozen"`
-	Overloaded int `json:"overloaded"`
-	NonIdle    int `json:"non_idle"`
+	Total      int `json:"total" jsonschema:"number of configured or reported nodes evaluated"`
+	Healthy    int `json:"healthy" jsonschema:"number of evaluated nodes with no health issues"`
+	Missing    int `json:"missing" jsonschema:"number of configured nodes with no reported status data"`
+	Frozen     int `json:"frozen" jsonschema:"number of reported nodes considered frozen"`
+	Overloaded int `json:"overloaded" jsonschema:"number of reported nodes indicating overload"`
+	NonIdle    int `json:"non_idle" jsonschema:"number of reported nodes whose non-empty monitor state is not idle"`
 }
 
 type ClusterNodeHealth struct {
-	Name         string   `json:"name"`
-	Reported     bool     `json:"reported"`
-	Healthy      bool     `json:"healthy"`
-	MonitorState string   `json:"monitor_state"`
-	IsLeader     bool     `json:"is_leader"`
-	IsFrozen     bool     `json:"is_frozen"`
-	IsOverloaded bool     `json:"is_overloaded"`
-	Issues       []string `json:"issues"`
+	Name         string   `json:"name" jsonschema:"the OpenSVC node name"`
+	Reported     bool     `json:"reported" jsonschema:"whether cluster status contains data for this node"`
+	Healthy      bool     `json:"healthy" jsonschema:"whether this node has no evaluated health issues"`
+	MonitorState string   `json:"monitor_state" jsonschema:"the monitor state reported by the node, or an empty string when unavailable"`
+	IsLeader     bool     `json:"is_leader" jsonschema:"whether the node reports itself as cluster leader"`
+	IsFrozen     bool     `json:"is_frozen" jsonschema:"whether the node frozen timestamp is non-zero or invalid"`
+	IsOverloaded bool     `json:"is_overloaded" jsonschema:"whether the node reports overload"`
+	Issues       []string `json:"issues" jsonschema:"deterministic health issues identified for this node"`
 }
 
 type ClusterObjectHealthSummary struct {
-	Total         int `json:"total"`
-	Up            int `json:"up"`
-	Down          int `json:"down"`
-	Warn          int `json:"warn"`
-	NotApplicable int `json:"not_applicable"`
-	Other         int `json:"other"`
-	Problems      int `json:"problems"`
+	Total         int `json:"total" jsonschema:"number of visible actor objects evaluated"`
+	Up            int `json:"up" jsonschema:"number of actor objects with availability up or stdby up"`
+	Down          int `json:"down" jsonschema:"number of actor objects with availability down or stdby down"`
+	Warn          int `json:"warn" jsonschema:"number of actor objects with availability warn"`
+	NotApplicable int `json:"not_applicable" jsonschema:"number of actor objects with availability n/a"`
+	Other         int `json:"other" jsonschema:"number of actor objects with any other availability value"`
+	Problems      int `json:"problems" jsonschema:"number of actor objects failing at least one health check"`
 }
 
 type ClusterObjectHealth struct {
-	Path             string   `json:"path"`
-	Availability     string   `json:"availability"`
-	Overall          string   `json:"overall"`
-	Provisioned      string   `json:"provisioned"`
-	Frozen           string   `json:"frozen"`
-	PlacementState   string   `json:"placement_state"`
-	UpInstancesCount int      `json:"up_instances_count"`
-	Scope            []string `json:"scope"`
-	Issues           []string `json:"issues"`
+	Path             string   `json:"path" jsonschema:"the canonical OpenSVC object path"`
+	Availability     string   `json:"availability" jsonschema:"the object availability reported by OpenSVC"`
+	Overall          string   `json:"overall" jsonschema:"the object overall status reported by OpenSVC"`
+	Provisioned      string   `json:"provisioned" jsonschema:"the object provisioned state reported by OpenSVC"`
+	Frozen           string   `json:"frozen" jsonschema:"the object freeze state reported by OpenSVC"`
+	PlacementState   string   `json:"placement_state" jsonschema:"the object placement state reported by OpenSVC"`
+	UpInstancesCount int      `json:"up_instances_count" jsonschema:"the number of up object instances reported by OpenSVC"`
+	Scope            []string `json:"scope" jsonschema:"the node names in the object scope"`
+	Issues           []string `json:"issues" jsonschema:"deterministic health issues identified for this object"`
 }
 
 func (s *Service) GetClusterHealth(ctx context.Context) (ClusterHealth, error) {
