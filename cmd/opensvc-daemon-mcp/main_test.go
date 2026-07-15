@@ -102,6 +102,23 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 			}
 			instanceRefreshed.Store(true)
 			fmt.Fprint(response, `{"session_id":"session-1"}`)
+		case "/api/node/name/node-a/instance/path/prod/svc/app/log":
+			if request.Method != http.MethodGet {
+				t.Errorf("got instance log method %q, want GET", request.Method)
+			}
+			if got := request.URL.Query().Get("follow"); got != "false" {
+				t.Errorf("got instance log follow %q, want false", got)
+			}
+			if got := request.URL.Query().Get("lines"); got != "3" {
+				t.Errorf("got instance log lines %q, want 3", got)
+			}
+			if got := request.Header.Get("Accept"); got != "text/event-stream" {
+				t.Errorf("got instance log Accept %q, want text/event-stream", got)
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(response, "event: log\nid: 1\ndata: {\"JSON\":\"{\\\"time\\\":\\\"2026-07-15T10:00:00Z\\\",\\\"level\\\":\\\"info\\\",\\\"message\\\":\\\"old event omitted\\\",\\\"node\\\":\\\"node-a\\\",\\\"obj_path\\\":\\\"prod/svc/app\\\"}\",\"_SYSTEMD_UNIT\":\"opensvc-agent.service\",\"_UID\":\"0\"}\n\n")
+			fmt.Fprint(response, "event: log\nid: 2\ndata: {\"JSON\":\"{\\\"time\\\":\\\"2026-07-15T10:01:00Z\\\",\\\"level\\\":\\\"warn\\\",\\\"message\\\":\\\"resource check delayed\\\",\\\"node\\\":\\\"node-a\\\",\\\"obj_path\\\":\\\"prod/svc/app\\\",\\\"pkg\\\":\\\"daemon/imon\\\",\\\"rid\\\":\\\"app#1\\\",\\\"sid\\\":\\\"session-1\\\"}\",\"_MACHINE_ID\":\"must-not-survive\"}\n\n")
+			fmt.Fprint(response, "event: log\nid: 3\ndata: {\"JSON\":\"{\\\"time\\\":\\\"2026-07-15T10:02:00Z\\\",\\\"level\\\":\\\"error\\\",\\\"message\\\":\\\"instance monitor failed\\\",\\\"node\\\":\\\"node-a\\\",\\\"obj_path\\\":\\\"prod/svc/app\\\",\\\"pkg\\\":\\\"daemon/imon\\\",\\\"eid\\\":\\\"event-3\\\",\\\"request_uuid\\\":\\\"request-3\\\",\\\"orchestration_id\\\":\\\"orchestration-3\\\"}\",\"GRANT\":\"root\"}\n\n")
 		case "/api/resource":
 			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
 				t.Errorf("got resource object path %q, want prod/svc/app", got)
@@ -179,6 +196,7 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	expectedToolTitles := map[string]string{
 		"get_daemon_identity":     "Get daemon identity",
 		"get_cluster_health":      "Assess cluster health",
+		"get_instance_logs":       "Get instance logs",
 		"get_object_config":       "Get object configuration",
 		"get_object_status":       "Get object status",
 		"list_cluster_objects":    "List cluster objects",
@@ -351,6 +369,30 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 	if instances.Count != 1 || instances.Instances[0].Node != "node-a" {
 		t.Errorf("got unexpected object instances %#v", instances)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_instance_logs",
+		Arguments: mcptools.GetInstanceLogsInput{
+			Path: "prod/svc/app", Node: "node-a", Lines: 2,
+		},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call get_instance_logs: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var logs mcptools.GetInstanceLogsOutput
+	if err := json.Unmarshal(data, &logs); err != nil {
+		t.Fatalf("decode instance logs: %v", err)
+	}
+	if logs.Count != 2 || !logs.Truncated || logs.Entries[0].Message != "resource check delayed" || logs.Entries[1].Message != "instance monitor failed" {
+		t.Errorf("got unexpected instance logs %#v", logs)
+	}
+	if logs.Entries[0].Component != "daemon/imon" || logs.Entries[0].ResourceID != "app#1" || logs.Entries[0].SessionID != "session-1" {
+		t.Errorf("got unexpected first instance log %#v", logs.Entries[0])
+	}
+	if strings.Contains(string(data), "_MACHINE_ID") || strings.Contains(string(data), "must-not-survive") || strings.Contains(string(data), "GRANT") {
+		t.Errorf("instance log output exposes raw journald metadata: %s", data)
 	}
 
 	result, err = session.CallTool(ctx, &mcp.CallToolParams{

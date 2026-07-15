@@ -1,6 +1,7 @@
 ---
 domain: instance
 tools:
+  - get_instance_logs
   - list_object_instances
   - refresh_instance_status
 stability: experimental
@@ -8,21 +9,154 @@ stability: experimental
 
 # Instance Tools
 
-This document describes tools that inspect and actively refresh the status of
-one OpenSVC object instance.
+This document describes tools that inspect logs and status, and actively
+refresh the status of one OpenSVC object instance.
 
 Implementation:
 
-- business logic: `internal/core/instance.go`;
+- business logic: `internal/core/instance.go` and
+  `internal/core/instance_logs.go`;
 - MCP definitions: `internal/tools/instance.go`.
 
 ## Tool selection
 
 Use `list_object_instances` after `get_object_status` to locate the node behind
-an aggregate problem and inspect status age. Use `refresh_instance_status` only
-when the selected instance's `updated_at` is too old for the diagnosis.
+an aggregate problem and inspect status age. Use `get_instance_logs` to inspect
+recent OpenSVC activity for that exact node instance. Use
+`refresh_instance_status` only when the selected instance's `updated_at` is too
+old for the diagnosis.
 
 ## Tools
+
+### `get_instance_logs`
+
+Returns recent OpenSVC daemon and orchestration log records associated with one
+exact object instance. Use it to correlate monitor transitions, resource
+checks, daemon API activity, and orchestration identifiers after identifying
+the affected node with `list_object_instances`.
+
+This tool does not return the stdout or stderr of the Redis process, container,
+or another workload. Container output is exposed by a different daemon
+endpoint and is outside this tool's contract.
+
+#### OpenSVC API and stream behavior
+
+```text
+GET /api/node/name/<node>/instance/path/<namespace>/<kind>/<name>/log?follow=false&lines=<lines+1>
+Accept: text/event-stream
+```
+
+OpenSVC uses Server-Sent Events for this endpoint even when `follow=false`.
+Each historical journal record is delivered as one finite SSE `log` event. The
+MCP consumes the stream to EOF and returns ordinary structured JSON; it does
+not follow, reconnect, or expose SSE envelopes.
+
+The request reads journal records available when the call starts. It does not
+run resource drivers, refresh instance status, or change daemon state. The tool
+is read-only, non-destructive, and closed-world.
+
+OpenSVC `3.0.0-rc21` delegates this instance route to its node-log handler,
+which requires the global `root` grant. A namespace `guest`, `operator`, or
+`admin` grant is not sufficient in this version, even though the outer
+instance handler first checks namespace visibility.
+
+#### Input
+
+| Field | Required | Default | Bounds | Meaning |
+|---|---:|---:|---:|---|
+| `path` | Yes | — | Exact object path | Canonical object path |
+| `node` | Yes | — | 255 characters | Exact node hosting the instance |
+| `lines` | No | 50 | 1..100 | Maximum recent entries returned |
+
+The MCP requests one extra daemon record to determine whether older entries
+were omitted. It then retains at most the requested number of most recent
+entries in chronological order.
+
+Lab input example:
+
+```json
+{
+  "path": "lab/svc/redis",
+  "node": "lab-node-01",
+  "lines": 3
+}
+```
+
+#### Lab output example
+
+```json
+{
+  "count": 3,
+  "entries": [
+    {
+      "component": "daemon/daemonapi",
+      "event_id": "b04fe7aa-c70c-4c30-a4a9-e7d2ef477061",
+      "level": "info",
+      "message": "daemon: api: inet: GET /api/object/path/lab/svc/redis/config/file: serve config file lab/svc/redis to opensvc-daemon-mcp",
+      "message_truncated": false,
+      "request_id": "7ae41b79-d9fd-4c0b-80c1-9368e88dbd93",
+      "session_id": "e24f692e-fd28-4b4a-a606-13e037e03c36",
+      "timestamp": "2026-07-15T14:57:09.712819569+09:00"
+    },
+    {
+      "component": "daemon/daemonapi",
+      "event_id": "b04fe7aa-c70c-4c30-a4a9-e7d2ef477061",
+      "level": "info",
+      "message": "daemon: api: ux: GET /api/object/path/lab/svc/redis/config/file: serve config file lab/svc/redis to root",
+      "message_truncated": false,
+      "request_id": "fd76415e-a716-4fd2-a765-a20f32b9d0cc",
+      "session_id": "e24f692e-fd28-4b4a-a606-13e037e03c36",
+      "timestamp": "2026-07-15T15:11:08.635069636+09:00"
+    },
+    {
+      "component": "daemon/daemonapi",
+      "event_id": "b04fe7aa-c70c-4c30-a4a9-e7d2ef477061",
+      "level": "info",
+      "message": "daemon: api: ux: GET /api/object/path/lab/svc/redis/config/file: serve config file lab/svc/redis to root",
+      "message_truncated": false,
+      "request_id": "5af7dc44-923d-48fd-8bb6-a327b1c7a453",
+      "session_id": "e24f692e-fd28-4b4a-a606-13e037e03c36",
+      "timestamp": "2026-07-15T16:18:11.055054155+09:00"
+    }
+  ],
+  "lines": 3,
+  "node": "lab-node-01",
+  "object": {
+    "kind": "svc",
+    "name": "redis",
+    "namespace": "lab",
+    "path": "lab/svc/redis"
+  },
+  "truncated": true
+}
+```
+
+#### Output and bounds
+
+| Field | Meaning |
+|---|---|
+| `object` | Canonical object reference |
+| `node` | Exact queried node |
+| `lines` | Effective requested maximum, including the default |
+| `count` | Number of entries returned |
+| `entries` | Recent entries in chronological order |
+| `truncated` | Older entries or message content were omitted |
+
+Each entry can contain `timestamp`, normalized `level`, bounded `message`,
+`message_truncated`, `component`, `resource_id`, `session_id`, `event_id`,
+`request_id`, and `orchestration_id`. Optional identifiers are omitted when the
+record does not provide them.
+
+Messages are limited to 2,048 Unicode code points each and 64 Ki Unicode code
+points across the response. Correlation fields are limited to 255 code points.
+Control and formatting characters are normalized. Raw journald metadata such
+as UID/GID, machine identifiers, systemd fields, and raw grant data is never
+returned.
+
+Malformed SSE, unexpected event types, invalid nested OpenSVC JSON, object or
+node mismatches, oversized streams, transport failures, and caller
+cancellation become MCP tool errors. Daemon `401` and `403` responses preserve
+their bounded RFC 7807 details.
 
 ### `list_object_instances`
 
@@ -225,13 +359,14 @@ invent or bypass grant decisions.
 
 ## Errors
 
-Invalid paths, filters, limits, cursors, nodes, or timeouts fail before daemon
-access where possible. Missing or invisible instances, authorization failures,
-transport errors, malformed responses, missing action session identifiers, and
-caller cancellation are MCP tool errors. No JWT or raw error body is exposed.
+Invalid paths, filters, limits, cursors, nodes, line counts, or timeouts fail
+before daemon access where possible. Missing or invisible instances,
+authorization failures, transport errors, malformed responses, missing action
+session identifiers, and caller cancellation are MCP tool errors. No JWT or
+raw error body is exposed.
 
 ## Compatibility
 
-Verified against OpenSVC `3.0.0-rc21` `GET /api/instance` and
-`PostInstanceActionStatus` behavior. The status action executes
-`instance status -r`.
+Verified against OpenSVC `3.0.0-rc21` `GET /api/instance`, `GetInstanceLogs`,
+and `PostInstanceActionStatus` behavior. The status action executes `instance
+status -r`.

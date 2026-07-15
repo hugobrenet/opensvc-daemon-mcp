@@ -25,7 +25,36 @@ type RefreshInstanceStatusInput struct {
 
 type RefreshInstanceStatusOutput = core.RefreshInstanceStatusResult
 
+type GetInstanceLogsInput struct {
+	Path  string `json:"path" jsonschema:"the exact canonical OpenSVC object path returned by list_cluster_objects"`
+	Node  string `json:"node" jsonschema:"the exact node name hosting the instance whose OpenSVC logs are requested"`
+	Lines int    `json:"lines,omitempty" jsonschema:"optional maximum number of recent log entries between 1 and 100; defaults to 50"`
+}
+
+type GetInstanceLogsOutput = core.InstanceLogList
+
 func RegisterInstanceTools(server *mcp.Server, service *core.Service) {
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "get_instance_logs",
+			Title:       "Get instance logs",
+			Description: "Read bounded recent OpenSVC orchestration and daemon logs for one exact object instance. This finite read does not follow the stream and does not return workload stdout or stderr; the daemon currently requires root access for this endpoint.",
+			Annotations: readOnlyClosedWorldAnnotations(),
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input GetInstanceLogsInput) (*mcp.CallToolResult, GetInstanceLogsOutput, error) {
+			logs, err := service.GetInstanceLogs(ctx, core.GetInstanceLogsOptions{
+				Path:  input.Path,
+				Node:  input.Node,
+				Lines: input.Lines,
+			})
+			if err != nil {
+				return nil, GetInstanceLogsOutput{}, err
+			}
+			return nil, logs, nil
+		},
+	)
+
 	mcp.AddTool(
 		server,
 		&mcp.Tool{

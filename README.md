@@ -150,6 +150,7 @@ go build -o /tmp/opensvc-daemon-mcp ./cmd/opensvc-daemon-mcp
 The test suite covers:
 
 - generic JSON GET requests;
+- bounded finite SSE reads for OpenSVC instance logs;
 - RS256 JWT verification and required OpenSVC access-token claims;
 - rejection of missing, invalid, expired, and refresh Bearer tokens;
 - request-scoped Bearer delegation to the daemon;

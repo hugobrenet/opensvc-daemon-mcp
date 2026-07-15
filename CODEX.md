@@ -65,6 +65,8 @@ internal/
     client_test.go
     http.go
     http_test.go
+    sse.go
+    sse_test.go
   config/
     config.go
     config_test.go
@@ -81,6 +83,8 @@ internal/
     object_status_test.go
     instance.go
     instance_test.go
+    instance_logs.go
+    instance_logs_test.go
     resource.go
     resource_test.go
   tools/
@@ -147,15 +151,21 @@ internal/client is transport-only.
 
 Client.NewHTTPClient constructs the standard HTTP client, timeout, server trust roots, and optional development-only TLS verification bypass. It must fail fast on invalid TLS CA files.
 
-Client.GetJSON and Client.PostJSON are responsible for:
+Client.GetJSON, Client.PostJSON, and Client.GetSSE are responsible for:
 
 - resolving a path against the daemon base URL;
 - encoding query parameters;
 - sending the requested HTTP operation;
-- setting JSON request headers;
 - applying the delegated Bearer token from request context;
-- checking the HTTP status;
-- decoding a bounded JSON response.
+- checking the HTTP status.
+
+Client.GetJSON and Client.PostJSON set JSON request headers and decode bounded
+JSON responses.
+
+Client.GetSSE additionally validates `text/event-stream`, parses bounded SSE
+framing, and invokes a caller-provided event consumer. It does not reconnect or
+follow a stream after EOF. OpenSVC event payload interpretation remains in the
+core package.
 
 Non-success responses are returned as `client.APIError`. The HTTP status is
 authoritative. Optional RFC 7807 `title` and `detail` fields are read with

@@ -14,6 +14,10 @@ type JSONPoster interface {
 	PostJSON(context.Context, string, url.Values, any, any) error
 }
 
+type SSEGetter interface {
+	GetSSE(context.Context, string, url.Values, func(string, string, []byte) error) error
+}
+
 type Service struct {
 	client JSONGetter
 }

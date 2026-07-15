@@ -12,7 +12,7 @@ combine the tools during operations.
 | Daemon | `get_daemon_identity` | [Daemon tools](daemon.md) |
 | Cluster | `get_cluster_health` | [Cluster tools](cluster.md) |
 | Objects | `list_cluster_objects`, `get_object_status`, `get_object_config` | [Object tools](objects.md) |
-| Instances | `list_object_instances`, `refresh_instance_status` | [Instance tools](instances.md) |
+| Instances | `list_object_instances`, `get_instance_logs`, `refresh_instance_status` | [Instance tools](instances.md) |
 | Resources | `list_object_resources` | [Resource tools](resources.md) |
 
 ## Diagnostic workflow
@@ -26,6 +26,7 @@ get_daemon_identity
   -> get_object_status
   -> get_object_config when declared settings matter
   -> list_object_instances
+  -> get_instance_logs when recent OpenSVC activity matters
   -> refresh_instance_status when freshness is insufficient
   -> list_object_resources
 ```
@@ -85,6 +86,7 @@ are representative and will differ between calls.
 | `get_object_status` | Yes | No | Visibility on the object namespace |
 | `get_object_config` | Yes | No | Visibility on the object namespace |
 | `list_object_instances` | Yes | No | Visibility on the object namespace |
+| `get_instance_logs` | Yes | No | `root` in OpenSVC 3.0.0-rc21 |
 | `refresh_instance_status` | No | No | `operator`, `admin`, or `root` |
 | `list_object_resources` | Yes | No | Visibility on the object namespace |
 
