@@ -350,6 +350,246 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	}
 }
 
+func TestDaemonAPIErrorsOverStreamableHTTP(t *testing.T) {
+	type scenario struct {
+		status       int
+		body         string
+		disconnect   bool
+		wantSuffix   string
+		notWantTexts []string
+	}
+	scenarios := map[string]scenario{
+		"lab/svc/unauthorized": {
+			status:     http.StatusUnauthorized,
+			body:       `{"title":"Unauthorized","detail":"delegated token is expired"}`,
+			wantSuffix: ": delegated token is expired",
+		},
+		"lab/svc/forbidden": {
+			status:     http.StatusForbidden,
+			body:       `{"status":418,"title":"Forbidden","detail":"need one of [operator:lab admin:lab operator admin root] grant"}`,
+			wantSuffix: ": need one of [operator:lab admin:lab operator admin root] grant",
+		},
+		"lab/svc/not-found": {
+			status: http.StatusNotFound,
+		},
+		"lab/svc/title-only": {
+			status:     http.StatusConflict,
+			body:       `{"title":"Object state conflict"}`,
+			wantSuffix: ": Object state conflict",
+		},
+		"lab/svc/rate-limited": {
+			status:     http.StatusTooManyRequests,
+			body:       `{"detail":"retry later"}`,
+			wantSuffix: ": retry later",
+		},
+		"lab/svc/server-error": {
+			status: http.StatusInternalServerError,
+			body:   `{"type":"about:blank","status":500,"extension":"ignored"}`,
+		},
+		"lab/svc/malformed": {
+			status:       http.StatusBadGateway,
+			body:         `{"detail":"truncated`,
+			notWantTexts: []string{"truncated"},
+		},
+		"lab/svc/null": {
+			status: http.StatusServiceUnavailable,
+			body:   `null`,
+		},
+		"lab/svc/array": {
+			status:       http.StatusBadGateway,
+			body:         `[{"detail":"ignored"}]`,
+			notWantTexts: []string{"ignored"},
+		},
+		"lab/svc/wrong-types": {
+			status:       http.StatusBadGateway,
+			body:         `{"title":123,"detail":"must-not-survive"}`,
+			notWantTexts: []string{"must-not-survive"},
+		},
+		"lab/svc/controls": {
+			status:     http.StatusUnprocessableEntity,
+			body:       `{"detail":" échec\u0000\u001b[31m \u202eretenter 🚨\n maintenant "}`,
+			wantSuffix: ": échec [31m retenter 🚨 maintenant",
+		},
+		"lab/svc/exact-limit": {
+			status:     http.StatusBadGateway,
+			body:       problemBodyWithSize(t, 64<<10),
+			wantSuffix: ": " + strings.Repeat("x", 2048) + "…",
+		},
+		"lab/svc/over-limit": {
+			status: http.StatusBadGateway,
+			body:   problemBodyWithSize(t, (64<<10)+1),
+		},
+		"lab/svc/read-failure": {
+			status:       http.StatusBadGateway,
+			disconnect:   true,
+			notWantTexts: []string{"partial-detail"},
+		},
+	}
+
+	privateKey, verifyKeyFile := writeTestJWTVerifyKey(t)
+	token := signJWT(t, privateKey, jwt.MapClaims{
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"grant":     []string{"guest"},
+		"iss":       "node-a",
+		"sub":       "error-test-user",
+		"token_use": "access",
+	})
+
+	daemonServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Authorization"); got != "Bearer "+token {
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if request.Method != http.MethodGet || request.URL.Path != "/api/object" {
+			http.NotFound(response, request)
+			return
+		}
+		selected := request.URL.Query().Get("path")
+		test, ok := scenarios[selected]
+		if !ok {
+			http.NotFound(response, request)
+			return
+		}
+		if test.disconnect {
+			hijacker, ok := response.(http.Hijacker)
+			if !ok {
+				t.Errorf("daemon test response does not support hijacking")
+				return
+			}
+			connection, buffer, err := hijacker.Hijack()
+			if err != nil {
+				t.Errorf("hijack daemon test response: %v", err)
+				return
+			}
+			fmt.Fprintf(buffer, "HTTP/1.1 %d %s\r\nContent-Type: application/problem+json\r\nContent-Length: 1024\r\nConnection: close\r\n\r\n{\"detail\":\"partial-detail", test.status, http.StatusText(test.status))
+			if err := buffer.Flush(); err != nil {
+				t.Errorf("flush partial daemon test response: %v", err)
+			}
+			_ = connection.Close()
+			return
+		}
+		response.Header().Set("Content-Type", "application/problem+json")
+		response.WriteHeader(test.status)
+		fmt.Fprint(response, test.body)
+	}))
+	defer daemonServer.Close()
+
+	listenAddress := reserveLoopbackAddress(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	binary := filepath.Join(t.TempDir(), "opensvc-daemon-mcp")
+	build := exec.CommandContext(ctx, "go", "build", "-o", binary, ".")
+	if output, err := build.CombinedOutput(); err != nil {
+		cancel()
+		t.Fatalf("build MCP server: %v\n%s", err, output)
+	}
+	command := exec.CommandContext(ctx, binary)
+	command.Env = append(
+		os.Environ(),
+		"OPENSVC_DAEMON_URL="+daemonServer.URL,
+		"OPENSVC_MCP_LISTEN_ADDRESS="+listenAddress,
+		"OPENSVC_MCP_JWT_VERIFY_KEY_FILE="+verifyKeyFile,
+	)
+	var serverOutput bytes.Buffer
+	command.Stdout = &serverOutput
+	command.Stderr = &serverOutput
+	if err := command.Start(); err != nil {
+		cancel()
+		t.Fatalf("start MCP server: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = command.Wait()
+	}()
+
+	httpClient := &http.Client{Transport: bearerRoundTripper{
+		base:  http.DefaultTransport,
+		token: token,
+	}}
+	var session *mcp.ClientSession
+	var err error
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		mcpClient := mcp.NewClient(
+			&mcp.Implementation{Name: "opensvc-daemon-mcp-error-test", Version: "v0.1.0"},
+			nil,
+		)
+		session, err = mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
+			Endpoint:             "http://" + listenAddress + "/mcp",
+			HTTPClient:           httpClient,
+			DisableStandaloneSSE: true,
+		}, nil)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("connect to MCP server: %v\nserver output:\n%s", err, serverOutput.String())
+	}
+	defer func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("close MCP session: %v", err)
+		}
+	}()
+
+	for path, test := range scenarios {
+		t.Run(strings.TrimPrefix(path, "lab/svc/"), func(t *testing.T) {
+			result, err := session.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "get_object_status",
+				Arguments: mcptools.GetObjectStatusInput{Path: path},
+			})
+			if err != nil {
+				t.Fatalf("call get_object_status: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("tool result is not marked as an error: %#v", result)
+			}
+			if result.StructuredContent != nil {
+				t.Errorf("error result has structured content: %#v", result.StructuredContent)
+			}
+			if len(result.Content) != 1 {
+				t.Fatalf("got %d error content blocks, want 1", len(result.Content))
+			}
+			text, ok := result.Content[0].(*mcp.TextContent)
+			if !ok {
+				t.Fatalf("error content has type %T, want *mcp.TextContent", result.Content[0])
+			}
+			want := fmt.Sprintf(
+				"get object status: OpenSVC daemon GET /api/object returned HTTP %d %s%s",
+				test.status,
+				http.StatusText(test.status),
+				test.wantSuffix,
+			)
+			if text.Text != want {
+				t.Errorf("got MCP error %q, want %q", text.Text, want)
+			}
+			if strings.Contains(text.Text, token) {
+				t.Fatal("MCP error exposes delegated JWT")
+			}
+			for _, notWant := range test.notWantTexts {
+				if strings.Contains(text.Text, notWant) {
+					t.Errorf("MCP error exposes rejected response content %q: %q", notWant, text.Text)
+				}
+			}
+		})
+	}
+}
+
+func problemBodyWithSize(t *testing.T, size int) string {
+	t.Helper()
+	const prefix = `{"detail":"`
+	const suffix = `"}`
+	fillerSize := size - len(prefix) - len(suffix)
+	if fillerSize < 0 {
+		t.Fatalf("problem body size %d is too small", size)
+	}
+	body := prefix + strings.Repeat("x", fillerSize) + suffix
+	if len(body) != size {
+		t.Fatalf("problem body has size %d, want %d", len(body), size)
+	}
+	return body
+}
+
 func assertSchemaPropertyDescriptions(t *testing.T, schema any, path string) {
 	t.Helper()
 	schemaObject, ok := schema.(map[string]any)

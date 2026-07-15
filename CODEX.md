@@ -147,15 +147,21 @@ internal/client is transport-only.
 
 Client.NewHTTPClient constructs the standard HTTP client, timeout, server trust roots, and optional development-only TLS verification bypass. It must fail fast on invalid TLS CA files.
 
-Client.GetJSON is responsible for:
+Client.GetJSON and Client.PostJSON are responsible for:
 
 - resolving a path against the daemon base URL;
 - encoding query parameters;
-- sending an HTTP GET request;
+- sending the requested HTTP operation;
 - setting JSON request headers;
 - applying the delegated Bearer token from request context;
 - checking the HTTP status;
 - decoding a bounded JSON response.
+
+Non-success responses are returned as `client.APIError`. The HTTP status is
+authoritative. Optional RFC 7807 `title` and `detail` fields are read with
+strict size limits, normalized, and exposed to the authenticated MCP caller.
+Never retain or expose raw response bodies, authorization headers, or JWTs in
+an API error.
 
 The client must not know about MCP tools or business use cases.
 
@@ -354,7 +360,9 @@ The end-to-end Streamable HTTP test in cmd/opensvc-daemon-mcp/main_test.go must 
 - sign a test access JWT and send it on every MCP request;
 - list tools;
 - call every registered tool;
-- validate structured output.
+- validate structured output;
+- validate bounded daemon API errors through real MCP tool calls, including
+  malformed, oversized, and interrupted responses.
 
 ## API and security rules
 

@@ -82,7 +82,9 @@ timestamps, polling duration, and latest instance state.
 Invalid inputs fail before daemon access. Missing or invisible instances,
 insufficient grants, rejected POST requests, missing session identifiers,
 transport failures, malformed responses, and caller cancellation are tool
-errors. The delegated JWT is never returned or logged.
+errors. For a non-success daemon response, the MCP error preserves the HTTP
+status and bounded RFC 7807 `title` and `detail` fields supplied by OpenSVC.
+The delegated JWT, headers, and raw response body are never returned or logged.
 
 ## Compatibility
 

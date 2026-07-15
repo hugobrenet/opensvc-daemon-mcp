@@ -76,7 +76,7 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, query u
 	defer response.Body.Close()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("OpenSVC daemon %s returned HTTP %s", path, response.Status)
+		return newAPIError(method, path, response)
 	}
 
 	if output == nil {

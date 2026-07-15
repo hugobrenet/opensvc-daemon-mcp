@@ -18,6 +18,7 @@ The current implementation:
 - delegates the same request-scoped JWT to the daemon API;
 - exposes a small, typed diagnostic tool surface with explicit safety annotations;
 - returns filtered, bounded structured responses;
+- preserves bounded RFC 7807 daemon error details in MCP tool errors;
 - supports a custom CA bundle for daemon server verification.
 
 It is not production-ready.
@@ -155,6 +156,7 @@ The test suite covers:
 - custom server CA loading and TLS verification;
 - absence of JWT values from HTTP errors;
 - URL and HTTP status handling;
+- bounded RFC 7807 error propagation through real MCP tool calls, including malformed and interrupted responses;
 - the current core use cases and their bounded response shaping;
 - end-to-end Streamable HTTP MCP calls to every registered tool using a delegated JWT against a fake OpenSVC daemon.
 

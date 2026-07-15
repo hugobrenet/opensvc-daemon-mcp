@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +111,82 @@ func TestGetJSONHTTPError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("got error %q, want HTTP 401 status", err)
+	}
+	var apiError *APIError
+	if !errors.As(err, &apiError) {
+		t.Fatalf("got error type %T, want *APIError", err)
+	}
+	if apiError.Method != http.MethodGet || apiError.Path != "/api/test" || apiError.StatusCode != http.StatusUnauthorized {
+		t.Errorf("got unexpected API error metadata: %+v", apiError)
+	}
+	if apiError.Title != "" || apiError.Detail != "" {
+		t.Errorf("non-JSON response populated problem fields: %+v", apiError)
+	}
+}
+
+func TestPostJSONProblemError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Errorf("got method %q, want POST", request.Method)
+		}
+		response.Header().Set("Content-Type", "application/problem+json")
+		response.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(response, `{"status":418,"title":"Forbidden","detail":"  need one of [operator:lab admin:lab operator admin root]\n grant  "}`)
+	}))
+	defer server.Close()
+
+	apiClient, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("create API client: %v", err)
+	}
+	ctx := auth.WithBearerToken(context.Background(), "delegated-token")
+	err = apiClient.PostJSON(ctx, "/api/action/status", nil, nil, &struct{}{})
+	if err == nil {
+		t.Fatal("POST JSON succeeded, want an error")
+	}
+	var apiError *APIError
+	if !errors.As(err, &apiError) {
+		t.Fatalf("got error type %T, want *APIError", err)
+	}
+	if apiError.Method != http.MethodPost || apiError.Path != "/api/action/status" || apiError.StatusCode != http.StatusForbidden || apiError.Status != "403 Forbidden" {
+		t.Errorf("got unexpected API error metadata: %+v", apiError)
+	}
+	if apiError.Title != "Forbidden" || apiError.Detail != "need one of [operator:lab admin:lab operator admin root] grant" {
+		t.Errorf("got unexpected problem details: %+v", apiError)
+	}
+	want := "OpenSVC daemon POST /api/action/status returned HTTP 403 Forbidden: need one of [operator:lab admin:lab operator admin root] grant"
+	if err.Error() != want {
+		t.Errorf("got error %q, want %q", err, want)
+	}
+}
+
+func TestGetJSONIgnoresOversizedProblemBody(t *testing.T) {
+	const marker = "must-not-be-exposed"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/problem+json")
+		response.WriteHeader(http.StatusBadGateway)
+		fmt.Fprintf(response, `{"title":"Bad Gateway","detail":"%s%s"}`, strings.Repeat("x", maxErrorResponseBodySize), marker)
+	}))
+	defer server.Close()
+
+	apiClient, err := New(server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("create API client: %v", err)
+	}
+	ctx := auth.WithBearerToken(context.Background(), "delegated-token")
+	err = apiClient.GetJSON(ctx, "/api/test", nil, &struct{}{})
+	if err == nil {
+		t.Fatal("GET JSON succeeded, want an error")
+	}
+	var apiError *APIError
+	if !errors.As(err, &apiError) {
+		t.Fatalf("got error type %T, want *APIError", err)
+	}
+	if apiError.Title != "" || apiError.Detail != "" {
+		t.Errorf("oversized response populated problem fields: %+v", apiError)
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Fatalf("error exposes oversized response content: %q", err)
 	}
 }
 
