@@ -1,147 +1,112 @@
 ---
-tool: get_daemon_identity
 domain: daemon
-category: discovery
+tools:
+  - get_daemon_identity
 stability: experimental
-read_only: true
 ---
 
-# `get_daemon_identity`
+# Daemon Tools
 
-Returns a bounded identity and compatibility view for the local OpenSVC daemon,
-its node, and its cluster.
+This document describes tools that identify the local OpenSVC daemon and its
+cluster context.
 
 Implementation:
 
 - business logic: `internal/core/daemon.go`;
-- MCP declaration: `internal/tools/daemon.go`.
+- MCP definitions: `internal/tools/daemon.go`.
 
-## When to use it
+## Tools
 
-Use this tool first when the agent needs to confirm which daemon, node, and
-cluster it is connected to, or when it needs the agent/API compatibility
-versions before selecting another operation.
+### `get_daemon_identity`
 
-Do not use it to assess cluster health, enumerate objects, read configuration,
-or inspect resource state. Those concerns belong to dedicated tools.
+Returns a bounded identity and compatibility view for the local daemon, its
+node, and its cluster.
 
-## MCP properties
+Use this tool first to confirm which daemon an agent is connected to and which
+OpenSVC agent/API versions it exposes. Do not use it for health assessment,
+object inventory, configuration, or resource state.
+
+#### OpenSVC API
+
+```text
+GET /api/cluster/status?selector=**
+```
+
+The tool selects the local node using `daemon.nodename`. It rejects a response
+that does not contain the local node or its agent version. The large object,
+instance, resource, heartbeat, and private configuration portions of the daemon
+response are discarded.
+
+The endpoint accepts `guest` or a higher operational role. Namespace grants can
+filter the underlying object payload, but this tool returns only identity and
+compatibility fields.
+
+#### MCP properties
 
 | Property | Value |
 |---|---|
 | Title | Get daemon identity |
 | Read-only | Yes |
 | Destructive | No |
-| Open world | No; it contacts only the configured OpenSVC daemon |
+| Open world | No; only the configured daemon is contacted |
 | Side effects | None |
 
-Annotations are protocol hints for MCP clients. Authorization is still enforced
-by the delegated OpenSVC JWT and the daemon.
+#### Input example
 
-## OpenSVC API
-
-```text
-GET /api/cluster/status?selector=**
-```
-
-The daemon serves cluster status from data cached for up to approximately two
-seconds. The result is therefore a point-in-time operational view, not a
-transactional snapshot.
-
-The tool finds the local node using `daemon.nodename`. It rejects a response
-that does not contain the local node or its agent version.
-
-## Authorization and visibility
-
-Every MCP request must carry an OpenSVC access JWT. The daemon endpoint accepts
-`guest` or a higher operational role. Namespace-scoped grants can filter object
-data in the underlying status response, but this tool exposes only daemon,
-cluster, node, and listener identity fields.
-
-An invalid or expired JWT is rejected by the MCP middleware before the tool is
-called. Insufficient OpenSVC grants are rejected by the daemon.
-
-## Input
-
-The tool has no input fields.
+The tool has no input fields:
 
 ```json
 {}
 ```
 
-Unknown input properties are rejected by the generated input schema.
+Unknown properties are rejected by the generated input schema.
 
-## Output
-
-| Field | Meaning |
-|---|---|
-| `daemon.nodename` | Name reported by the local daemon |
-| `daemon.pid` | Local daemon process identifier |
-| `daemon.started_at` | Daemon start timestamp reported by OpenSVC |
-| `daemon.routines` | Number of daemon goroutines |
-| `cluster.id` | Stable OpenSVC cluster identifier |
-| `cluster.name` | Configured cluster name |
-| `cluster.nodes` | Configured cluster node names |
-| `cluster.quorum` | Whether quorum is enabled in cluster configuration |
-| `node.agent_version` | OpenSVC agent version reported by the local node |
-| `node.api_version` | Daemon API compatibility version |
-| `node.compat_version` | OpenSVC compatibility version |
-| `node.is_leader` | Whether the local node reports itself as leader |
-| `node.is_overloaded` | Whether the local node reports overload |
-| `node.booted_at` | Node boot timestamp reported by OpenSVC |
-| `listener.address` | Configured daemon listener address |
-| `listener.port` | Configured daemon listener port |
-
-The full `/api/cluster/status` response is deliberately discarded. In
-particular, object, instance, resource, heartbeat, and private configuration
-payloads are not returned.
-
-Example:
+#### Lab output example
 
 ```json
 {
-  "daemon": {
-    "nodename": "node-a",
-    "pid": 2610,
-    "started_at": "2026-07-10T17:23:35+09:00",
-    "routines": 121
-  },
   "cluster": {
-    "id": "cluster-123",
-    "name": "prod",
-    "nodes": ["node-a", "node-b"],
-    "quorum": true
+    "id": "11111111-2222-3333-4444-555555555555",
+    "name": "lab-cluster",
+    "nodes": ["lab-node-01"],
+    "quorum": false
   },
-  "node": {
-    "agent_version": "v3.0.0",
-    "api_version": 1,
-    "compat_version": 2,
-    "is_leader": true,
-    "is_overloaded": false,
-    "booted_at": "2026-07-10T17:23:14+09:00"
+  "daemon": {
+    "nodename": "lab-node-01",
+    "pid": 2610,
+    "routines": 135,
+    "started_at": "2026-07-10T17:23:35.844939787+09:00"
   },
   "listener": {
-    "address": "::",
+    "address": "",
     "port": 1215
+  },
+  "node": {
+    "agent_version": "v3.0.0-rc21-0-gc979e4c01",
+    "api_version": 0,
+    "booted_at": "2026-07-10T17:23:14+09:00",
+    "compat_version": 0,
+    "is_leader": true,
+    "is_overloaded": false
   }
 }
 ```
 
-## Errors
+`listener.address` can be empty when OpenSVC uses its default bind behavior.
+Version and timestamp values are reported by the daemon and are not generated
+by the MCP.
+
+#### Errors
 
 | Condition | Result |
 |---|---|
-| Missing, invalid, expired, or non-access JWT | MCP HTTP `401` |
-| Valid JWT with insufficient OpenSVC grants | Tool error containing daemon HTTP `403` |
+| Invalid MCP JWT | MCP HTTP `401` |
+| Insufficient daemon grants | Tool error containing daemon HTTP `403` |
 | Daemon unavailable or malformed response | Tool error with transport or decoding context |
-| Missing `daemon.nodename` | Tool error; no partial identity is returned |
-| Local node absent from cluster status | Tool error; no partial identity is returned |
-| Local node missing its agent version | Tool error; no partial identity is returned |
+| Missing local nodename, node status, or agent version | Tool error; no partial identity |
 
 Errors never include the delegated JWT.
 
 ## Compatibility
 
-The contract targets the OpenSVC v3 daemon API. Endpoint behavior and RBAC were
-verified against OpenSVC `3.0.0-rc21`; compatibility with other v3 builds must
-remain covered by representative response tests.
+Verified against OpenSVC `3.0.0-rc21` `GET /api/cluster/status` behavior.

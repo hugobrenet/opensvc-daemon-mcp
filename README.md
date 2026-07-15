@@ -27,15 +27,15 @@ It is not production-ready.
 
 The MCP currently exposes mostly read-only tools plus one explicit,
 non-destructive instance status refresh.
-Detailed documentation is organized by OpenSVC daemon domain:
+Detailed documentation is organized by OpenSVC daemon domain and includes
+verified, normalized lab input/output examples:
 
-- [Daemon domain](docs/tools/daemon.md)
-- [Cluster domain](docs/tools/cluster.md)
-- [Object domain](docs/tools/object.md)
-- [Object status](docs/tools/object-status.md)
-- [Instance domain](docs/tools/instance.md)
-- [Instance status refresh](docs/tools/refresh-instance-status.md)
-- [Resource domain](docs/tools/resource.md)
+- [Tool index and diagnostic workflow](docs/tools/README.md)
+- [Daemon tools](docs/tools/daemon.md)
+- [Cluster tools](docs/tools/cluster.md)
+- [Object tools](docs/tools/objects.md)
+- [Instance tools](docs/tools/instances.md)
+- [Resource tools](docs/tools/resources.md)
 
 ## Requirements
 

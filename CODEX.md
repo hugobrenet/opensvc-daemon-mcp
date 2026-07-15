@@ -13,15 +13,14 @@ The long-term goal is to support an AI operations agent that can inspect, diagno
 The current implementation exposes a limited diagnostic tool surface. Most
 tools are read-only; `refresh_instance_status` is an explicit, non-destructive
 active probe. Tool contracts, endpoints, examples, and domain-specific behavior
-are documented in:
+are documented by domain in:
 
-- [Daemon domain](docs/tools/daemon.md)
-- [Cluster domain](docs/tools/cluster.md)
-- [Object domain](docs/tools/object.md)
-- [Object status](docs/tools/object-status.md)
-- [Instance domain](docs/tools/instance.md)
-- [Instance status refresh](docs/tools/refresh-instance-status.md)
-- [Resource domain](docs/tools/resource.md)
+- [Tool index and diagnostic workflow](docs/tools/README.md)
+- [Daemon tools](docs/tools/daemon.md)
+- [Cluster tools](docs/tools/cluster.md)
+- [Object tools](docs/tools/objects.md)
+- [Instance tools](docs/tools/instances.md)
+- [Resource tools](docs/tools/resources.md)
 
 Streamable HTTP and delegated OpenSVC access JWT authentication are implemented. Every MCP request requires a Bearer token, the middleware validates it, and the same request-scoped token authenticates the tool's daemon API calls. Do not add additional tools, authentication modes, configuration frameworks, or generated API clients unless the user explicitly expands the scope.
 
@@ -46,13 +45,12 @@ cmd/
 
 docs/
   tools/
+    README.md
     daemon.md
     cluster.md
-    object.md
-    object-status.md
-    instance.md
-    refresh-instance-status.md
-    resource.md
+    objects.md
+    instances.md
+    resources.md
 
 internal/
   auth/
@@ -261,23 +259,26 @@ matching file under `docs/tools/`.
 
 Runtime MCP metadata is deliberately concise. The matching
 `docs/tools/<domain>.md` file is the durable human and agent-facing contract.
-Each tool document must begin with this front matter:
+Each domain document groups every tool owned by that domain and begins with
+this front matter:
 
 ~~~yaml
 ---
-tool: tool_name
 domain: domain_name
-category: discovery
+tools:
+  - first_tool_name
+  - second_tool_name
 stability: experimental
-read_only: true
 ---
 ~~~
 
-Choose `category` to describe the operational purpose and update `stability`
-when the contract matures. Do not use documentation tags as authorization or
-runtime policy.
+Update `stability` when the domain contracts mature. Do not use documentation
+tags as authorization or runtime policy.
 
-Each tool document must cover:
+The domain index in `docs/tools/README.md` must list every registered tool and
+show the recommended cross-domain diagnostic workflow. Each domain document
+must introduce its core and MCP implementation files. Each documented tool
+must cover:
 
 - when to use the tool and when not to use it;
 - MCP title, side-effect annotations, and their non-authoritative nature;
@@ -286,7 +287,8 @@ Each tool document must cover:
 - whether the endpoint reads last-known daemon state or actively refreshes drivers;
 - input fields, defaults, validation, pagination, and selector behavior;
 - every output field and any derived semantics;
-- representative JSON requests or responses;
+- representative JSON input and complete bounded output examples captured from
+  the lab and normalized for publication;
 - expected authentication, authorization, transport, and data errors;
 - the OpenSVC version against which behavior was verified.
 

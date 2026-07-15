@@ -1,120 +1,72 @@
 ---
-tool: get_cluster_health
 domain: cluster
-category: diagnostics
+tools:
+  - get_cluster_health
 stability: experimental
-read_only: true
 ---
 
-# `get_cluster_health`
+# Cluster Tools
 
-Computes a deterministic, point-in-time health assessment for the OpenSVC
-cluster, its nodes, and the actor objects visible to the delegated caller.
+This document describes tools that assess the current OpenSVC cluster view.
 
 Implementation:
 
 - business logic: `internal/core/cluster.go`;
-- MCP declaration: `internal/tools/cluster.go`.
+- MCP definitions: `internal/tools/cluster.go`.
 
-## When to use it
+## Tools
 
-Use this tool to obtain a first operational diagnosis, identify unhealthy or
-missing nodes, detect leadership or compatibility issues, and obtain a bounded
-list of problematic actor objects.
+### `get_cluster_health`
 
-This is an MCP-defined assessment derived from OpenSVC status fields. It is not
-a single canonical health flag returned by the daemon, and it does not replace
-object-specific diagnosis.
+Computes a deterministic, point-in-time health assessment for the cluster, its
+nodes, and actor objects visible to the delegated caller.
 
-## MCP properties
+Use it for the first operational diagnosis: leadership, compatibility, frozen
+or missing nodes, non-idle monitors, overload, and a bounded list of problematic
+objects. Continue with object and instance tools for a focused diagnosis.
 
-| Property | Value |
-|---|---|
-| Title | Assess cluster health |
-| Read-only | Yes |
-| Destructive | No |
-| Open world | No; it contacts only the configured OpenSVC daemon |
-| Side effects | None |
+This is an MCP-defined assessment derived from OpenSVC fields, not a canonical
+health flag returned by the daemon.
 
-Annotations are protocol hints for MCP clients. The daemon remains responsible
-for authorization and namespace filtering.
-
-## OpenSVC API and freshness
+#### OpenSVC API and freshness
 
 ```text
 GET /api/cluster/status?selector=**
 ```
 
-The daemon serves cluster status from data cached for up to approximately two
-seconds. This cache refresh only rebuilds the cluster view from the status
-currently held in daemon memory. It does not execute resource-driver status
-probes.
+The daemon serves a cached cluster view. Refreshing that cache does not execute
+resource status drivers. Consequently, `healthy=true` means no issue is present
+in the visible last-known OpenSVC state; it does not prove that every resource
+was probed during this call.
 
-Instance and resource states are therefore last-known OpenSVC states. They are
-updated by explicit status actions, scheduled status jobs, and other daemon
-events. An out-of-band change such as `docker stop` can remain invisible until
-the next status refresh. The inverse is also possible: a recovered resource can
-remain reported down until refresh.
+The endpoint accepts `guest` or a higher role. Object summaries cover only
+namespaces visible to the delegated JWT. A healthy result makes no assertion
+about inaccessible namespaces.
 
-Consequently, `healthy=true` means that no problem exists in the visible status
-currently published by OpenSVC. It is not proof that every resource was probed
-at call time. This tool intentionally performs no implicit refresh because a
-cluster-wide refresh executes drivers, can be expensive, and can require
-stronger grants.
+#### Assessment rules
 
-## Authorization and visibility
+Cluster issues include:
 
-Every MCP request must carry an OpenSVC access JWT. The daemon endpoint accepts
-`guest` or a higher operational role. OpenSVC filters object data according to
-the namespaces granted to the JWT subject.
+- incompatible nodes;
+- a frozen cluster;
+- no node reporting itself as leader;
+- more than one node reporting itself as leader.
 
-Consequently, `object_summary`, `problem_objects`, and the top-level `healthy`
-decision cover only actor objects visible to the caller. A healthy result does
-not assert that inaccessible namespaces contain no problems.
+Leader names are sorted lexicographically.
 
-## Input
+A node is unhealthy when it is missing, has no agent version or monitor state,
+has a non-empty monitor state other than `idle`, is frozen, or reports overload.
+An unparseable non-empty `frozen_at` is treated conservatively as frozen. The
+evaluated node set is the union of configured and reported nodes.
 
-The tool has no input fields.
+Only objects with an `avail` field are treated as actors. An actor is
+problematic when at least one condition holds:
 
-```json
-{}
-```
-
-Unknown input properties are rejected by the generated input schema.
-
-## Assessment rules
-
-### Cluster
-
-The following conditions add a cluster issue:
-
-- nodes are reported as incompatible;
-- the cluster is frozen;
-- no node reports itself as leader;
-- more than one node reports itself as leader.
-
-Leader node names are sorted lexicographically.
-
-### Nodes
-
-The evaluated node set is the union of configured nodes and nodes present in
-the status response. Node names are sorted lexicographically.
-
-A node is unhealthy when any of these conditions is true:
-
-- a configured node has no status data;
-- the agent version is missing;
-- the monitor state is missing;
-- the normalized monitor state is not `idle`;
-- `frozen_at` is a non-zero timestamp;
-- the node reports overload.
-
-An unparseable non-empty `frozen_at` value is treated conservatively as frozen.
-
-### Actor objects
-
-Only objects carrying an `avail` field are treated as actor objects. Support
-objects without `avail`, such as configuration or secret objects, are ignored.
+- availability is not `up`, `stdby up`, or `n/a`;
+- overall status is `down`, `warn`, `undef`, or `stdby down`;
+- a non-empty placement state is neither `optimal` nor `n/a`;
+- a non-empty freeze state is not `unfrozen`;
+- provisioned state is `false`, `mixed`, or `undef`.
 
 Availability counters use these normalized values:
 
@@ -126,105 +78,87 @@ Availability counters use these normalized values:
 | `not_applicable` | `n/a` |
 | `other` | Any other value |
 
-An actor object is considered problematic when at least one condition holds:
+Problem objects are sorted by path. At most 100 are returned and
+`problem_objects_truncated` indicates whether additional problems were omitted.
 
-- availability is not `up`, `stdby up`, or `n/a`;
-- overall status is `down`, `warn`, `undef`, or `stdby down`;
-- a non-empty placement state is neither `optimal` nor `n/a`;
-- a non-empty freeze state is not `unfrozen`;
-- provisioned state is `false`, `mixed`, or `undef`.
+The top-level `healthy` field is true only when the cluster has no issue, every
+evaluated node is healthy, and no visible actor object is problematic.
 
-Problem objects are sorted by path. At most 100 are returned;
-`problem_objects_truncated` indicates that additional problems exist.
+#### MCP properties
 
-### Top-level decision
-
-`healthy` is true only when all these conditions hold:
-
-- there is no cluster-wide issue;
-- every evaluated node is healthy;
-- no visible actor object is problematic.
-
-## Output
-
-| Field | Meaning |
+| Property | Value |
 |---|---|
-| `healthy` | Combined result of all documented checks |
-| `cluster` | Cluster identity, compatibility, freeze, leaders, and issues |
-| `node_summary` | Counts of total, healthy, missing, frozen, overloaded, and non-idle nodes |
-| `nodes` | Per-node health details and issue messages |
-| `object_summary` | Availability and problem counts for visible actor objects |
-| `problem_objects` | Sorted details for up to 100 problematic actor objects |
-| `problem_objects_truncated` | Whether more problematic objects were omitted |
+| Title | Assess cluster health |
+| Read-only | Yes |
+| Destructive | No |
+| Open world | No; only the configured daemon is contacted |
+| Side effects | None |
 
-`get_cluster_health` does not currently expose per-object status timestamps.
-Use `get_object_status` and `list_object_instances` to inspect `updated_at` when
-freshness matters for a diagnosis.
+#### Input example
 
-All issue strings are deterministic descriptions intended for diagnosis. They
-are part of the current experimental contract and may be refined before the
-tool becomes stable.
+```json
+{}
+```
 
-Example healthy result:
+#### Lab output example
 
 ```json
 {
-  "healthy": true,
   "cluster": {
-    "id": "cluster-123",
-    "name": "prod",
+    "id": "11111111-2222-3333-4444-555555555555",
     "is_compatible": true,
     "is_frozen": false,
-    "leader_nodes": ["node-a"],
-    "issues": []
+    "issues": [],
+    "leader_nodes": ["lab-node-01"],
+    "name": "lab-cluster"
   },
+  "healthy": true,
   "node_summary": {
-    "total": 1,
+    "frozen": 0,
     "healthy": 1,
     "missing": 0,
-    "frozen": 0,
+    "non_idle": 0,
     "overloaded": 0,
-    "non_idle": 0
+    "total": 1
   },
   "nodes": [
     {
-      "name": "node-a",
-      "reported": true,
       "healthy": true,
-      "monitor_state": "idle",
-      "is_leader": true,
       "is_frozen": false,
+      "is_leader": true,
       "is_overloaded": false,
-      "issues": []
+      "issues": [],
+      "monitor_state": "idle",
+      "name": "lab-node-01",
+      "reported": true
     }
   ],
   "object_summary": {
-    "total": 1,
-    "up": 1,
     "down": 0,
-    "warn": 0,
     "not_applicable": 0,
     "other": 0,
-    "problems": 0
+    "problems": 0,
+    "total": 1,
+    "up": 1,
+    "warn": 0
   },
   "problem_objects": [],
   "problem_objects_truncated": false
 }
 ```
 
-## Errors
+`problem_objects` is sorted by canonical object path. Node and leader names are
+also sorted for deterministic output.
+
+#### Errors
 
 | Condition | Result |
 |---|---|
-| Missing, invalid, expired, or non-access JWT | MCP HTTP `401` |
-| Valid JWT with insufficient OpenSVC grants | Tool error containing daemon HTTP `403` |
-| Daemon unavailable or malformed status payload | Tool error with transport or decoding context |
-
-No partial health result is returned when the daemon request or decoding fails.
-Errors never include the delegated JWT.
+| Invalid MCP JWT | MCP HTTP `401` |
+| Insufficient daemon grants | Tool error containing daemon HTTP `403` |
+| Daemon unavailable or malformed status | Tool error; no partial assessment |
 
 ## Compatibility
 
-The contract targets the OpenSVC v3 daemon API. Endpoint behavior and RBAC were
-verified against OpenSVC `3.0.0-rc21`. Health rules must be reviewed whenever
+Verified against OpenSVC `3.0.0-rc21`. Health rules must be reviewed whenever
 OpenSVC adds or changes status values.
