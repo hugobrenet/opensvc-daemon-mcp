@@ -13,7 +13,7 @@ combine the tools during operations.
 | Cluster | `get_cluster_health` | [Cluster tools](cluster.md) |
 | Objects | `list_cluster_objects`, `get_object_status`, `get_object_config` | [Object tools](objects.md) |
 | Instances | `list_object_instances`, `get_instance_logs`, `refresh_instance_status` | [Instance tools](instances.md) |
-| Resources | `list_object_resources` | [Resource tools](resources.md) |
+| Resources | `list_object_resources`, `get_container_logs` | [Resource tools](resources.md) |
 
 ## Diagnostic workflow
 
@@ -29,6 +29,7 @@ get_daemon_identity
   -> get_instance_logs when recent OpenSVC activity matters
   -> refresh_instance_status when freshness is insufficient
   -> list_object_resources
+  -> get_container_logs when workload stdout or stderr matters
 ```
 
 `get_daemon_identity` confirms the target node and cluster.
@@ -89,6 +90,7 @@ are representative and will differ between calls.
 | `get_instance_logs` | Yes | No | `root` in OpenSVC 3.0.0-rc21 |
 | `refresh_instance_status` | No | No | `operator`, `admin`, or `root` |
 | `list_object_resources` | Yes | No | Visibility on the object namespace |
+| `get_container_logs` | Yes | No | `root` in OpenSVC 3.0.0-rc21 |
 
 Annotations are client hints. The daemon's authorization decision is always
 authoritative.

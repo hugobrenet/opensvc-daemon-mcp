@@ -17,7 +17,38 @@ type ListObjectResourcesInput struct {
 
 type ListObjectResourcesOutput = core.ObjectResourceList
 
+type GetContainerLogsInput struct {
+	Path       string `json:"path" jsonschema:"the exact canonical OpenSVC object path returned by list_cluster_objects"`
+	Node       string `json:"node" jsonschema:"the exact node hosting the container resource"`
+	ResourceID string `json:"resource_id" jsonschema:"the exact OpenSVC container resource id returned by list_object_resources; example: container#redis"`
+	Lines      int    `json:"lines,omitempty" jsonschema:"optional maximum recent container log records requested from OpenSVC between 1 and 200; defaults to 50"`
+}
+
+type GetContainerLogsOutput = core.ContainerLogs
+
 func RegisterResourceTools(server *mcp.Server, service *core.Service) {
+	mcp.AddTool(
+		server,
+		&mcp.Tool{
+			Name:        "get_container_logs",
+			Title:       "Get container logs",
+			Description: "Read bounded recent stdout and stderr logs for one exact OpenSVC container resource. This finite read never follows the stream; application logs may contain sensitive data, and the daemon currently requires root access for this endpoint.",
+			Annotations: readOnlyClosedWorldAnnotations(),
+		},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input GetContainerLogsInput) (*mcp.CallToolResult, GetContainerLogsOutput, error) {
+			logs, err := service.GetContainerLogs(ctx, core.GetContainerLogsOptions{
+				Path:       input.Path,
+				Node:       input.Node,
+				ResourceID: input.ResourceID,
+				Lines:      input.Lines,
+			})
+			if err != nil {
+				return nil, GetContainerLogsOutput{}, err
+			}
+			return nil, logs, nil
+		},
+	)
+
 	mcp.AddTool(
 		server,
 		&mcp.Tool{

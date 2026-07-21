@@ -119,11 +119,29 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 			fmt.Fprint(response, "event: log\nid: 1\ndata: {\"JSON\":\"{\\\"time\\\":\\\"2026-07-15T10:00:00Z\\\",\\\"level\\\":\\\"info\\\",\\\"message\\\":\\\"old event omitted\\\",\\\"node\\\":\\\"node-a\\\",\\\"obj_path\\\":\\\"prod/svc/app\\\"}\",\"_SYSTEMD_UNIT\":\"opensvc-agent.service\",\"_UID\":\"0\"}\n\n")
 			fmt.Fprint(response, "event: log\nid: 2\ndata: {\"JSON\":\"{\\\"time\\\":\\\"2026-07-15T10:01:00Z\\\",\\\"level\\\":\\\"warn\\\",\\\"message\\\":\\\"resource check delayed\\\",\\\"node\\\":\\\"node-a\\\",\\\"obj_path\\\":\\\"prod/svc/app\\\",\\\"pkg\\\":\\\"daemon/imon\\\",\\\"rid\\\":\\\"app#1\\\",\\\"sid\\\":\\\"session-1\\\"}\",\"_MACHINE_ID\":\"must-not-survive\"}\n\n")
 			fmt.Fprint(response, "event: log\nid: 3\ndata: {\"JSON\":\"{\\\"time\\\":\\\"2026-07-15T10:02:00Z\\\",\\\"level\\\":\\\"error\\\",\\\"message\\\":\\\"instance monitor failed\\\",\\\"node\\\":\\\"node-a\\\",\\\"obj_path\\\":\\\"prod/svc/app\\\",\\\"pkg\\\":\\\"daemon/imon\\\",\\\"eid\\\":\\\"event-3\\\",\\\"request_uuid\\\":\\\"request-3\\\",\\\"orchestration_id\\\":\\\"orchestration-3\\\"}\",\"GRANT\":\"root\"}\n\n")
+		case "/api/node/name/node-a/instance/path/prod/svc/app/container/log":
+			if request.Method != http.MethodGet {
+				t.Errorf("got container log method %q, want GET", request.Method)
+			}
+			if got := request.URL.Query().Get("rid"); got != "container#app" {
+				t.Errorf("got container log rid %q, want container#app", got)
+			}
+			if got := request.URL.Query().Get("follow"); got != "false" {
+				t.Errorf("got container log follow %q, want false", got)
+			}
+			if got := request.URL.Query().Get("lines"); got != "2" {
+				t.Errorf("got container log lines %q, want 2", got)
+			}
+			if got := request.Header.Get("Accept"); got != "text/event-stream" {
+				t.Errorf("got container log Accept %q, want text/event-stream", got)
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(response, "application started\nready to accept connections\n")
 		case "/api/resource":
 			if got := request.URL.Query().Get("path"); got != "prod/svc/app" {
 				t.Errorf("got resource object path %q, want prod/svc/app", got)
 			}
-			fmt.Fprint(response, `{"kind":"ResourceList","items":[{"kind":"ResourceItem","meta":{"node":"node-a","object":"prod/svc/app","rid":"app#1"},"data":{"config":{"is_disabled":false,"is_monitored":true,"is_standby":false},"status":{"type":"app.forking","label":"application","status":"up","monitor":true,"provisioned":{"state":"true"},"tags":[],"log":[]}}}]}`)
+			fmt.Fprint(response, `{"kind":"ResourceList","items":[{"kind":"ResourceItem","meta":{"node":"node-a","object":"prod/svc/app","rid":"container#app"},"data":{"config":{"is_disabled":false,"is_monitored":true,"is_standby":false},"status":{"type":"container.docker","label":"docker app:latest","status":"up","monitor":true,"provisioned":{"state":"true"},"tags":[],"log":[]}}}]}`)
 		default:
 			t.Errorf("got unexpected daemon path %q", request.URL.Path)
 			http.NotFound(response, request)
@@ -196,6 +214,7 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	expectedToolTitles := map[string]string{
 		"get_daemon_identity":     "Get daemon identity",
 		"get_cluster_health":      "Assess cluster health",
+		"get_container_logs":      "Get container logs",
 		"get_instance_logs":       "Get instance logs",
 		"get_object_config":       "Get object configuration",
 		"get_object_status":       "Get object status",
@@ -425,8 +444,26 @@ func TestServerOverStreamableHTTP(t *testing.T) {
 	if err := json.Unmarshal(data, &resources); err != nil {
 		t.Fatalf("decode object resources: %v", err)
 	}
-	if resources.Count != 1 || resources.Resources[0].RID != "app#1" {
+	if resources.Count != 1 || resources.Resources[0].RID != "container#app" {
 		t.Errorf("got unexpected object resources %#v", resources)
+	}
+
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_container_logs",
+		Arguments: mcptools.GetContainerLogsInput{
+			Path: "prod/svc/app", Node: "node-a", ResourceID: "container#app", Lines: 2,
+		},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("call get_container_logs: err=%v result=%#v", err, result)
+	}
+	data, _ = json.Marshal(result.StructuredContent)
+	var containerLogs mcptools.GetContainerLogsOutput
+	if err := json.Unmarshal(data, &containerLogs); err != nil {
+		t.Fatalf("decode container logs: %v", err)
+	}
+	if containerLogs.ResourceID != "container#app" || containerLogs.LineCount != 2 || containerLogs.Content != "application started\nready to accept connections" || containerLogs.Truncated {
+		t.Errorf("got unexpected container logs %#v", containerLogs)
 	}
 }
 

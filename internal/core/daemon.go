@@ -18,6 +18,10 @@ type SSEGetter interface {
 	GetSSE(context.Context, string, url.Values, func(string, string, []byte) error) error
 }
 
+type StreamGetter interface {
+	GetStream(context.Context, string, url.Values, func([]byte) error) error
+}
+
 type Service struct {
 	client JSONGetter
 }
