@@ -429,6 +429,7 @@ Current environment:
 | Variable | Default |
 |---|---|
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 |
+| OPENSVC_DAEMON_REQUEST_TIMEOUT | 20s |
 | OPENSVC_MCP_LISTEN_ADDRESS | 127.0.0.1:8080 |
 | OPENSVC_MCP_JWT_VERIFY_KEY_FILE | /var/lib/opensvc/certs/ca_certificates |
 | OPENSVC_DAEMON_TLS_CA_FILE | empty |

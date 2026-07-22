@@ -13,10 +13,21 @@ import (
 type HTTPOptions struct {
 	TLSInsecure bool
 	TLSCAFile   string
+	Timeout     time.Duration
 }
+
+const DefaultRequestTimeout = 20 * time.Second
 
 // NewHTTPClient constructs the HTTP client used to contact the OpenSVC daemon.
 func NewHTTPClient(options HTTPOptions) (*http.Client, error) {
+	timeout := options.Timeout
+	if timeout == 0 {
+		timeout = DefaultRequestTimeout
+	}
+	if timeout < 0 {
+		return nil, fmt.Errorf("OpenSVC daemon request timeout must not be negative")
+	}
+
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: options.TLSInsecure, // Explicit development-only escape hatch for self-signed daemon certificates.
@@ -39,6 +50,6 @@ func NewHTTPClient(options HTTPOptions) (*http.Client, error) {
 	}
 
 	transport.TLSClientConfig = tlsConfig
-	client := &http.Client{Transport: transport, Timeout: 20 * time.Second}
+	client := &http.Client{Transport: transport, Timeout: timeout}
 	return client, nil
 }

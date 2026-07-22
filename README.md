@@ -74,6 +74,7 @@ The server supports these environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | OPENSVC_DAEMON_URL | https://127.0.0.1:1215 | Base URL of the local OpenSVC daemon API |
+| OPENSVC_DAEMON_REQUEST_TIMEOUT | 20s | Whole-request timeout for daemon JSON, SSE, and bounded stream calls; accepted range 1s to 2m |
 | OPENSVC_MCP_LISTEN_ADDRESS | 127.0.0.1:8080 | Streamable HTTP listen address; currently restricted to a loopback IP |
 | OPENSVC_MCP_JWT_VERIFY_KEY_FILE | /var/lib/opensvc/certs/ca_certificates | OpenSVC cluster CA certificate or RSA public key used to verify JWT signatures |
 | OPENSVC_DAEMON_TLS_CA_FILE | empty | PEM CA certificates appended to the system trust store |

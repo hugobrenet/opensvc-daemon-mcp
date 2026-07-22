@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPClientTLSVerification(t *testing.T) {
@@ -71,5 +73,50 @@ func TestHTTPClientCustomCA(t *testing.T) {
 func TestNewHTTPClientRejectsMissingCAFile(t *testing.T) {
 	if _, err := NewHTTPClient(HTTPOptions{TLSCAFile: "/missing/ca.crt"}); err == nil {
 		t.Fatal("NewHTTPClient succeeded, want an error")
+	}
+}
+
+func TestHTTPClientRequestTimeout(t *testing.T) {
+	requestStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(requestStarted)
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	httpClient, err := NewHTTPClient(HTTPOptions{Timeout: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("create HTTP client: %v", err)
+	}
+	_, err = httpClient.Get(server.URL)
+	if err == nil || !strings.Contains(err.Error(), "Client.Timeout exceeded") {
+		t.Fatalf("got error %v, want client timeout", err)
+	}
+	select {
+	case <-requestStarted:
+	default:
+		t.Fatal("server did not receive the timed out request")
+	}
+}
+
+func TestHTTPClientTimeoutConfiguration(t *testing.T) {
+	defaultClient, err := NewHTTPClient(HTTPOptions{})
+	if err != nil {
+		t.Fatalf("create default HTTP client: %v", err)
+	}
+	if defaultClient.Timeout != DefaultRequestTimeout {
+		t.Fatalf("default timeout = %s, want %s", defaultClient.Timeout, DefaultRequestTimeout)
+	}
+
+	customClient, err := NewHTTPClient(HTTPOptions{Timeout: 45 * time.Second})
+	if err != nil {
+		t.Fatalf("create custom HTTP client: %v", err)
+	}
+	if customClient.Timeout != 45*time.Second {
+		t.Fatalf("custom timeout = %s, want 45s", customClient.Timeout)
+	}
+
+	if _, err := NewHTTPClient(HTTPOptions{Timeout: -time.Second}); err == nil {
+		t.Fatal("negative timeout succeeded")
 	}
 }

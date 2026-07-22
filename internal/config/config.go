@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/hugobrenet/opensvc-daemon-mcp/internal/client"
 )
@@ -14,6 +15,8 @@ const (
 	defaultListenAddress    = "127.0.0.1:8080"
 	defaultJWTVerifyKeyFile = "/var/lib/opensvc/certs/ca_certificates"
 	defaultTLSInsecure      = false
+	minDaemonRequestTimeout = time.Second
+	maxDaemonRequestTimeout = 2 * time.Minute
 )
 
 // Config contains the runtime configuration of the MCP server process.
@@ -32,6 +35,19 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("parse OPENSVC_DAEMON_TLS_INSECURE: %w", err)
 	}
+	daemonRequestTimeout, err := time.ParseDuration(
+		getenv("OPENSVC_DAEMON_REQUEST_TIMEOUT", client.DefaultRequestTimeout.String()),
+	)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse OPENSVC_DAEMON_REQUEST_TIMEOUT: %w", err)
+	}
+	if daemonRequestTimeout < minDaemonRequestTimeout || daemonRequestTimeout > maxDaemonRequestTimeout {
+		return Config{}, fmt.Errorf(
+			"OPENSVC_DAEMON_REQUEST_TIMEOUT must be between %s and %s",
+			minDaemonRequestTimeout,
+			maxDaemonRequestTimeout,
+		)
+	}
 	listenAddress := getenv("OPENSVC_MCP_LISTEN_ADDRESS", defaultListenAddress)
 	if err := validateLoopbackAddress(listenAddress); err != nil {
 		return Config{}, fmt.Errorf("validate OPENSVC_MCP_LISTEN_ADDRESS: %w", err)
@@ -43,6 +59,7 @@ func Load() (Config, error) {
 		HTTP: client.HTTPOptions{
 			TLSInsecure: tlsInsecure,
 			TLSCAFile:   os.Getenv("OPENSVC_DAEMON_TLS_CA_FILE"),
+			Timeout:     daemonRequestTimeout,
 		},
 	}, nil
 }
