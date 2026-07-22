@@ -29,9 +29,9 @@ type GetObjectConfigInput struct {
 
 type GetObjectConfigOutput = core.ObjectConfig
 
-func RegisterObjectTools(server *mcp.Server, service *core.Service) {
-	mcp.AddTool(
-		server,
+func RegisterObjectTools(registrar *Registrar, service *core.Service) error {
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "get_object_config",
 			Title:       "Get object configuration",
@@ -49,10 +49,12 @@ func RegisterObjectTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, config, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
 
-	mcp.AddTool(
-		server,
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "get_object_status",
 			Title:       "Get object status",
@@ -66,10 +68,12 @@ func RegisterObjectTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, status, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
 
-	mcp.AddTool(
-		server,
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:  "list_cluster_objects",
 			Title: "List cluster objects",
@@ -88,5 +92,8 @@ func RegisterObjectTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, objects, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
+	return nil
 }

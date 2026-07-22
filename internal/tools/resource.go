@@ -26,9 +26,9 @@ type GetContainerLogsInput struct {
 
 type GetContainerLogsOutput = core.ContainerLogs
 
-func RegisterResourceTools(server *mcp.Server, service *core.Service) {
-	mcp.AddTool(
-		server,
+func RegisterResourceTools(registrar *Registrar, service *core.Service) error {
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "get_container_logs",
 			Title:       "Get container logs",
@@ -47,10 +47,12 @@ func RegisterResourceTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, logs, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
 
-	mcp.AddTool(
-		server,
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "list_object_resources",
 			Title:       "List object resources",
@@ -70,5 +72,8 @@ func RegisterResourceTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, resources, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
+	return nil
 }

@@ -11,9 +11,9 @@ type GetDaemonIdentityInput struct{}
 
 type GetDaemonIdentityOutput = core.DaemonIdentity
 
-func RegisterDaemonTools(server *mcp.Server, service *core.Service) {
-	mcp.AddTool(
-		server,
+func RegisterDaemonTools(registrar *Registrar, service *core.Service) error {
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:  "get_daemon_identity",
 			Title: "Get daemon identity",
@@ -28,5 +28,8 @@ func RegisterDaemonTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, identity, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
+	return nil
 }

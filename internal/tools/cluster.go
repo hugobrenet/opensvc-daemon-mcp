@@ -11,9 +11,9 @@ type GetClusterHealthInput struct{}
 
 type GetClusterHealthOutput = core.ClusterHealth
 
-func RegisterClusterTools(server *mcp.Server, service *core.Service) {
-	mcp.AddTool(
-		server,
+func RegisterClusterTools(registrar *Registrar, service *core.Service) error {
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:  "get_cluster_health",
 			Title: "Assess cluster health",
@@ -28,5 +28,8 @@ func RegisterClusterTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, health, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
+	return nil
 }

@@ -134,12 +134,14 @@ It is responsible for:
 The expected registration style is:
 
 ~~~go
-tools.RegisterDaemonTools(server, service)
-tools.RegisterClusterTools(server, service)
-tools.RegisterObjectTools(server, service)
-tools.RegisterInstanceTools(server, service)
-tools.RegisterResourceTools(server, service)
-// tools.RegisterNodeTools(server, service)
+registrar, err := tools.NewRegistrar(server)
+if err != nil {
+    log.Fatal(err)
+}
+if err := tools.RegisterDaemonTools(registrar, service); err != nil {
+    log.Fatal(err)
+}
+// Register the other implemented domains explicitly and handle every error.
 ~~~
 
 Only uncomment or add a domain when that domain actually exists.
@@ -235,11 +237,11 @@ internal/tools owns MCP contracts and registration.
 Each domain file exposes one registration function using Go exported naming:
 
 ~~~go
-func RegisterDaemonTools(server *mcp.Server, service *core.Service)
-func RegisterClusterTools(server *mcp.Server, service *core.Service)
-func RegisterObjectTools(server *mcp.Server, service *core.Service)
-func RegisterInstanceTools(server *mcp.Server, service *core.Service)
-func RegisterResourceTools(server *mcp.Server, service *core.Service)
+func RegisterDaemonTools(registrar *Registrar, service *core.Service) error
+func RegisterClusterTools(registrar *Registrar, service *core.Service) error
+func RegisterObjectTools(registrar *Registrar, service *core.Service) error
+func RegisterInstanceTools(registrar *Registrar, service *core.Service) error
+func RegisterResourceTools(registrar *Registrar, service *core.Service) error
 ~~~
 
 Tool handlers should remain thin:
@@ -260,6 +262,11 @@ protocol:
   an important limitation when applicable;
 - typed input and output structures so the SDK publishes both JSON Schemas;
 - standard `ToolAnnotations` that accurately describe its behavior.
+
+All tool declarations must be added through `Registrar`. Registration validates
+the declaration and generated schemas, rejects duplicate names, and returns an
+error before the HTTP server starts. Do not call `mcp.AddTool` directly from a
+domain registration function.
 
 Read-only tools contact only the configured OpenSVC daemon. Use
 `readOnlyClosedWorldAnnotations` to declare them as read-only, non-destructive,

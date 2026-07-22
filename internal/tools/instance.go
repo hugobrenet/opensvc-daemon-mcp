@@ -33,9 +33,9 @@ type GetInstanceLogsInput struct {
 
 type GetInstanceLogsOutput = core.InstanceLogList
 
-func RegisterInstanceTools(server *mcp.Server, service *core.Service) {
-	mcp.AddTool(
-		server,
+func RegisterInstanceTools(registrar *Registrar, service *core.Service) error {
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "get_instance_logs",
 			Title:       "Get instance logs",
@@ -53,10 +53,12 @@ func RegisterInstanceTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, logs, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
 
-	mcp.AddTool(
-		server,
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "refresh_instance_status",
 			Title:       "Refresh instance status",
@@ -74,10 +76,12 @@ func RegisterInstanceTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, result, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
 
-	mcp.AddTool(
-		server,
+	if err := addTool(
+		registrar,
 		&mcp.Tool{
 			Name:        "list_object_instances",
 			Title:       "List object instances",
@@ -96,5 +100,8 @@ func RegisterInstanceTools(server *mcp.Server, service *core.Service) {
 			}
 			return nil, instances, nil
 		},
-	)
+	); err != nil {
+		return err
+	}
+	return nil
 }

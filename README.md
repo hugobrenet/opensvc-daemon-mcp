@@ -17,6 +17,7 @@ The current implementation:
 - validates JWT signatures and claims before invoking the MCP handler;
 - delegates the same request-scoped JWT to the daemon API;
 - exposes a small, typed diagnostic tool surface with explicit safety annotations;
+- validates every tool declaration and generated schema before opening the HTTP listener;
 - returns filtered, bounded structured responses;
 - preserves bounded RFC 7807 daemon error details in MCP tool errors;
 - supports a custom CA bundle for daemon server verification.
@@ -161,6 +162,7 @@ The test suite covers:
 - URL and HTTP status handling;
 - bounded RFC 7807 error propagation through real MCP tool calls, including malformed and interrupted responses;
 - the current core use cases and their bounded response shaping;
+- fail-fast validation of tool names, descriptions, annotations, schemas, and duplicate names;
 - end-to-end Streamable HTTP MCP calls to every registered tool using a delegated JWT against a fake OpenSVC daemon.
 
 ## Design principles

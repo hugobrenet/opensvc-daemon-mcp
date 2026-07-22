@@ -47,11 +47,25 @@ func main() {
 		},
 		nil,
 	)
-	tools.RegisterDaemonTools(server, service)
-	tools.RegisterClusterTools(server, service)
-	tools.RegisterObjectTools(server, service)
-	tools.RegisterInstanceTools(server, service)
-	tools.RegisterResourceTools(server, service)
+	registrar, err := tools.NewRegistrar(server)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := tools.RegisterDaemonTools(registrar, service); err != nil {
+		log.Fatal(err)
+	}
+	if err := tools.RegisterClusterTools(registrar, service); err != nil {
+		log.Fatal(err)
+	}
+	if err := tools.RegisterObjectTools(registrar, service); err != nil {
+		log.Fatal(err)
+	}
+	if err := tools.RegisterInstanceTools(registrar, service); err != nil {
+		log.Fatal(err)
+	}
+	if err := tools.RegisterResourceTools(registrar, service); err != nil {
+		log.Fatal(err)
+	}
 
 	streamHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
